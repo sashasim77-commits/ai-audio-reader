@@ -6,8 +6,10 @@
   <meta name="theme-color" content="#0f0f1a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="AudioReader" />
   <title>AI Audio Reader</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -140,7 +142,7 @@
 
   </div>
 
-  <audio id="audioPlayer" preload="metadata"></audio>
+  <audio id="audioPlayer" preload="metadata" playsinline></audio>
   <script src="script.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

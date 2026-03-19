@@ -1,5 +1,5 @@
-const CACHE = 'ai-audio-reader-v1';
-const ASSETS = ['/', '/index.html', '/style.css', '/script.js', '/manifest.json'];
+const CACHE = 'ai-audio-reader-v2';
+const ASSETS = ['/', '/index.html', '/style.css', '/script.js', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));

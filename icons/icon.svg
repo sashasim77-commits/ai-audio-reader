@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f0f1a"/>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6c63ff"/>
+      <stop offset="100%" stop-color="#ff6584"/>
+    </linearGradient>
+  </defs>
+  <!-- Headphones arc -->
+  <path d="M256 140c-68 0-116 52-116 116v20h16v-20c0-55.2 44.8-100 100-100s100 44.8 100 100v20h16v-20c0-64-52-116-116-116z" fill="url(#g)"/>
+  <!-- Left ear cup -->
+  <rect x="124" y="272" width="52" height="88" rx="20" fill="url(#g)"/>
+  <!-- Right ear cup -->
+  <rect x="336" y="272" width="52" height="88" rx="20" fill="url(#g)"/>
+  <!-- Center dot -->
+  <circle cx="256" cy="356" r="14" fill="url(#g)" opacity="0.6"/>
+</svg>
