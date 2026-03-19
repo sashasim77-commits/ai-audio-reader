@@ -14,6 +14,8 @@ const STORAGE_KEY  = 'air_library';
 const PROGRESS_KEY = 'air_progress';
 const CURRENT_KEY  = 'air_current';
 const SPEED_KEY    = 'air_speed';
+const VOLUME_KEY   = 'air_volume';
+const THEME_KEY    = 'air_theme';
 const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
 
 // ===== IndexedDB =====
@@ -316,6 +318,30 @@ function applySpeed(v) {
   document.querySelectorAll('.speed-btn').forEach(b =>
     b.classList.toggle('active', parseFloat(b.dataset.speed) === v)
   );
+}
+
+// ===== Volume Persistence =====
+function saveVolume(v) { try { localStorage.setItem(VOLUME_KEY, v); } catch {} }
+function loadVolume()  { return Math.max(0, Math.min(1, parseFloat(localStorage.getItem(VOLUME_KEY) ?? '1'))); }
+
+// ===== Theme =====
+const SVG_SUN  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+const SVG_MOON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  if (theme === 'dark') {
+    btn.innerHTML = SVG_SUN;
+    btn.title = 'Switch to light theme';
+    btn.setAttribute('aria-label', 'Switch to light theme');
+  } else {
+    btn.innerHTML = SVG_MOON;
+    btn.title = 'Switch to dark theme';
+    btn.setAttribute('aria-label', 'Switch to dark theme');
+  }
+  try { localStorage.setItem(THEME_KEY, theme); } catch {}
 }
 
 // ===== Continue Banner =====
@@ -823,7 +849,16 @@ document.querySelectorAll('.speed-btn').forEach(btn => {
   btn.addEventListener('click', () => applySpeed(parseFloat(btn.dataset.speed)));
 });
 
-volumeSlider.addEventListener('input', () => { audio.volume = parseFloat(volumeSlider.value); });
+volumeSlider.addEventListener('input', () => {
+  const v = parseFloat(volumeSlider.value);
+  audio.volume = v;
+  saveVolume(v);
+});
+
+document.getElementById('themeBtn')?.addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
 
 uploadBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', e => { handleFiles(e.target.files); fileInput.value = ''; });
@@ -1001,15 +1036,23 @@ async function init() {
   // Restore speed
   applySpeed(loadSpeed());
 
-  // Show continue banner if there's a saved position
+  // Restore volume
+  const vol = loadVolume();
+  audio.volume = vol;
+  volumeSlider.value = vol;
+
+  // Restore theme (before render so no flash)
+  applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+
+  // Auto-load last track + show continue banner if saved position > 5s
   const lastId = localStorage.getItem(CURRENT_KEY);
   if (lastId) {
     const ctx = findTrack(lastId);
-    const pos = loadProgress(lastId);
-    if (ctx?.track.url && pos > 10) {
+    if (ctx?.track.url) {
       state.currentId = lastId;
       updatePlayerTitle(ctx.track, ctx.group);
-      showContinueBanner(ctx.track, ctx.group, pos);
+      const pos = loadProgress(lastId);
+      if (pos > 5) showContinueBanner(ctx.track, ctx.group, pos);
     }
   }
 
