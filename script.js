@@ -16,6 +16,7 @@ const CURRENT_KEY  = 'air_current';
 const SPEED_KEY    = 'air_speed';
 const VOLUME_KEY   = 'air_volume';
 const THEME_KEY    = 'air_theme';
+const SLEEP_KEY    = 'air_sleep_end';
 const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
 
 // ===== IndexedDB =====
@@ -106,6 +107,11 @@ const continueBookName= document.getElementById('continueBookName');
 const continuePos     = document.getElementById('continuePos');
 const continueBtn     = document.getElementById('continueBtn');
 const continueDismiss = document.getElementById('continueDismiss');
+const sleepSection    = document.getElementById('sleepSection');
+const sleepCancelBtn  = document.getElementById('sleepCancel');
+const sleepCountdown  = document.getElementById('sleepCountdown');
+const sleepTimeEl     = document.getElementById('sleepTime');
+const sleepButtons    = [...document.querySelectorAll('.sleep-btn[data-minutes]')];
 const playlistSection = document.getElementById('playlistSection');
 const playlistCount   = document.getElementById('playlistCount');
 const playlistItems   = document.getElementById('playlistItems');
@@ -996,6 +1002,130 @@ function resetProgress(id) {
   showToast('Progress reset');
 }
 
+// ===== Sleep Timer =====
+const SLEEP_FADE_MS = 5000;
+let sleepTimerId = null;
+let sleepIntervalId = null;
+let sleepEndTime = 0;
+let sleepFadeToken = 0;
+
+function saveSleepState(endTime, minutes = 0) {
+  try {
+    if (!endTime) localStorage.removeItem(SLEEP_KEY);
+    else localStorage.setItem(SLEEP_KEY, JSON.stringify({ endTime, minutes }));
+  } catch {}
+}
+
+function loadSleepState() {
+  try {
+    const raw = localStorage.getItem(SLEEP_KEY);
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return { endTime: parseInt(raw, 10), minutes: 0 };
+    const parsed = JSON.parse(raw);
+    if (!parsed?.endTime) return null;
+    return { endTime: parsed.endTime, minutes: parsed.minutes || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function syncAudioVolume() {
+  audio.volume = parseFloat(volumeSlider.value);
+}
+
+function updateSleepUI(minutes = 0) {
+  const active = sleepEndTime > Date.now();
+  sleepButtons.forEach(btn => btn.classList.toggle('active', active && parseInt(btn.dataset.minutes, 10) === minutes));
+  if (sleepCancelBtn) sleepCancelBtn.hidden = !active;
+  if (sleepCountdown) sleepCountdown.hidden = !active;
+  if (!active && sleepTimeEl) {
+    sleepTimeEl.textContent = '';
+    sleepTimeEl.classList.remove('warning');
+  }
+}
+
+function resetSleepTimerState({ restoreVolume = true } = {}) {
+  clearTimeout(sleepTimerId);
+  clearInterval(sleepIntervalId);
+  sleepTimerId = null;
+  sleepIntervalId = null;
+  sleepEndTime = 0;
+  sleepFadeToken++;
+  saveSleepState(0);
+  if (restoreVolume) syncAudioVolume();
+  updateSleepUI();
+}
+
+function startSleepTimer(minutes) {
+  scheduleSleepTimer(Date.now() + minutes * 60000, minutes);
+  showToast(`Sleep timer: ${minutes} min`);
+}
+
+function clearSleepTimer(toast = true) {
+  resetSleepTimerState();
+  if (toast) showToast('Sleep timer cancelled');
+}
+
+function tickSleepDisplay() {
+  if (!sleepTimeEl) return;
+  const remaining = sleepEndTime - Date.now();
+  if (remaining <= 0) {
+    sleepTimeEl.textContent = '0:00';
+    sleepTimeEl.classList.add('warning');
+    return;
+  }
+  const mins = Math.floor(remaining / 60000);
+  const secs = Math.floor((remaining % 60000) / 1000);
+  sleepTimeEl.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+  sleepTimeEl.classList.toggle('warning', remaining <= SLEEP_FADE_MS);
+}
+
+async function fadeAndPause(durationMs = SLEEP_FADE_MS) {
+  const token = ++sleepFadeToken;
+  const savedVol = parseFloat(volumeSlider.value);
+  // Smooth fade over the final seconds before pause.
+  if (state.isPlaying && durationMs > 0) {
+    const startedAt = performance.now();
+    while (sleepFadeToken === token) {
+      const progress = Math.min((performance.now() - startedAt) / durationMs, 1);
+      audio.volume = savedVol * (1 - progress);
+      if (progress >= 1) break;
+      await new Promise(requestAnimationFrame);
+    }
+  }
+
+  if (sleepFadeToken !== token) return;
+  if (state.isPlaying) pauseAudio();
+  resetSleepTimerState();
+  showToast('Sleep timer paused');
+}
+
+function scheduleSleepTimer(endTime, minutes = 0, { restoreVolume = true } = {}) {
+  resetSleepTimerState({ restoreVolume });
+
+  const remainingMs = endTime - Date.now();
+  if (remainingMs <= 0) return;
+
+  sleepEndTime = endTime;
+  saveSleepState(endTime, minutes);
+  updateSleepUI(minutes);
+  tickSleepDisplay();
+
+  sleepIntervalId = setInterval(tickSleepDisplay, 1000);
+  sleepTimerId = setTimeout(() => {
+    fadeAndPause(Math.min(SLEEP_FADE_MS, Math.max(0, sleepEndTime - Date.now())));
+  }, Math.max(0, remainingMs - SLEEP_FADE_MS));
+}
+
+// Sleep timer delegated click
+sleepSection?.addEventListener('click', e => {
+  const btn = e.target.closest('.sleep-btn');
+  if (!btn) return;
+  if (btn.id === 'sleepCancel') { clearSleepTimer(); return; }
+  const minutes = parseInt(btn.dataset.minutes, 10);
+  if (minutes) startSleepTimer(minutes);
+});
+
 // Keyboard
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
@@ -1043,6 +1173,14 @@ async function init() {
 
   // Restore theme (before render so no flash)
   applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+
+  // Restore sleep timer if still active
+  const savedSleep = loadSleepState();
+  if (savedSleep?.endTime > Date.now()) {
+    scheduleSleepTimer(savedSleep.endTime, savedSleep.minutes, { restoreVolume: false });
+  } else {
+    saveSleepState(0);
+  }
 
   // Auto-load last track + show continue banner if saved position > 5s
   const lastId = localStorage.getItem(CURRENT_KEY);

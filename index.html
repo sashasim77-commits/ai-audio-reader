@@ -178,6 +178,26 @@
         <div class="playlist-items" id="playlistItems"></div>
       </div>
 
+      <!-- Sleep Timer -->
+      <div class="sleep-section" id="sleepSection">
+        <div class="sleep-header">
+          <span class="sleep-label">SLEEP TIMER</span>
+          <div class="sleep-countdown" id="sleepCountdown" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+            <span id="sleepTime">0:00</span>
+          </div>
+        </div>
+        <div class="sleep-buttons">
+          <button class="sleep-btn" data-minutes="15">15 min</button>
+          <button class="sleep-btn" data-minutes="30">30 min</button>
+          <button class="sleep-btn" data-minutes="60">60 min</button>
+          <button class="sleep-btn sleep-cancel" id="sleepCancel" hidden>✕ Cancel</button>
+        </div>
+      </div>
+
     </main>
 
     <!-- Library Sidebar -->
