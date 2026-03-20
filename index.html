@@ -395,26 +395,58 @@
   <audio id="audioPlayer" preload="metadata" playsinline></audio>
   <script src="script.js"></script>
   <script>
-    // Track whether a SW was already controlling this page before registration
-    const _hadController = !!(navigator && navigator.serviceWorker && navigator.serviceWorker.controller);
+    (function () {
+      var banner   = document.getElementById('updateBanner');
+      var btnUpdate  = document.getElementById('updateBtn');
+      var btnDismiss = document.getElementById('updateDismiss');
 
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
-
-      // New SW took control (skipWaiting fired in install):
-      // show banner only if there WAS a previous controller
-      // (first-ever install has no previous controller — no banner needed)
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (_hadController) _showUpdateBanner();
+      // ── Buttons work independently of script.js ──────────────────
+      btnDismiss.addEventListener('click', function () {
+        banner.hidden = true;
       });
-    }
 
-    function _showUpdateBanner() {
-      const b = document.getElementById('updateBanner');
-      if (b) b.hidden = false;
-    }
+      btnUpdate.addEventListener('click', async function () {
+        console.log('[Update] clicked');
+        banner.hidden = true;
 
-    // Button listeners are handled in script.js
+        try {
+          var reg = await navigator.serviceWorker.getRegistration();
+          if (reg && reg.waiting) {
+            console.log('[Update] posting SKIP_WAITING to waiting worker');
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          } else {
+            console.log('[Update] no waiting worker — reloading directly');
+          }
+        } catch (e) {
+          console.warn('[Update] SW error:', e);
+        }
+
+        console.log('[Update] reloading');
+        window.location.reload(true);
+      });
+
+      // ── Service Worker registration ───────────────────────────────
+      if (!('serviceWorker' in navigator)) return;
+
+      var hadController = !!navigator.serviceWorker.controller;
+
+      navigator.serviceWorker.register('./sw.js')
+        .then(function (reg) {
+          console.log('[SW] registered, scope:', reg.scope);
+          // If a waiting worker already exists on page load — show banner
+          if (reg.waiting) {
+            console.log('[SW] waiting worker found on load');
+            banner.hidden = false;
+          }
+        })
+        .catch(function (e) { console.warn('[SW] registration failed:', e); });
+
+      // New SW took control → show banner (only if there was a previous controller)
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        console.log('[SW] controllerchange, hadController:', hadController);
+        if (hadController) banner.hidden = false;
+      });
+    }());
   </script>
 </body>
 </html>
