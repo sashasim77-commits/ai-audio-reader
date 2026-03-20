@@ -21,7 +21,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0;color:var(--neon-a)">
       <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
     </svg>
-    <span>Доступна новая версия</span>
+    <span id="updateBannerText">New version available</span>
     <button class="update-now-btn" id="updateBtn">Обновить</button>
     <button class="update-close-btn" id="updateDismiss" aria-label="Закрыть">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12">
@@ -333,6 +333,24 @@
             </div>
           </div>
 
+          <div class="settings-group">
+            <div class="settings-label-row">
+              <div class="settings-label">APP VERSION</div>
+              <div class="settings-version" id="appVersionValue">v-</div>
+            </div>
+            <div class="settings-actions">
+              <button class="settings-action-btn" id="checkUpdatesBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="23 4 23 10 17 10"/>
+                  <polyline points="1 20 1 14 7 14"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"/>
+                  <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"/>
+                </svg>
+                Check for Updates
+              </button>
+            </div>
+          </div>
+
           <!-- Danger zone -->
           <div class="settings-group settings-danger">
             <div class="settings-label">MANAGE DATA</div>
@@ -393,69 +411,7 @@
   </div>
 
   <audio id="audioPlayer" preload="metadata" playsinline></audio>
+  <script src="version.js"></script>
   <script src="script.js"></script>
-  <script>
-    (function () {
-      var banner     = document.getElementById('updateBanner');
-      var btnUpdate  = document.getElementById('updateBtn');
-      var btnDismiss = document.getElementById('updateDismiss');
-
-      // ── Dismiss: just hide the banner ────────────────────────────
-      btnDismiss.addEventListener('click', function () {
-        banner.style.display = 'none';
-      });
-
-      // ── Update: nuke caches + unregister SW + hard reload ────────
-      btnUpdate.addEventListener('click', async function () {
-        console.log('[Update] clicked — starting nuclear update');
-        banner.style.display = 'none';
-
-        // 1. Delete every cache entry
-        if ('caches' in window) {
-          try {
-            var keys = await caches.keys();
-            console.log('[Update] deleting caches:', keys);
-            await Promise.all(keys.map(function (k) { return caches.delete(k); }));
-          } catch (e) { console.warn('[Update] cache clear error:', e); }
-        }
-
-        // 2. Unregister every service worker
-        if ('serviceWorker' in navigator) {
-          try {
-            var regs = await navigator.serviceWorker.getRegistrations();
-            console.log('[Update] unregistering', regs.length, 'SW(s)');
-            await Promise.all(regs.map(function (r) { return r.unregister(); }));
-          } catch (e) { console.warn('[Update] SW unregister error:', e); }
-        }
-
-        // 3. Hard reload — browser fetches everything fresh from network
-        console.log('[Update] reloading');
-        window.location.reload(true);
-      });
-
-      // ── Service Worker registration ──────────────────────────────
-      if (!('serviceWorker' in navigator)) return;
-
-      var hadController = !!navigator.serviceWorker.controller;
-
-      // updateViaCache:'none' — browser always fetches fresh sw.js, ignores HTTP cache
-      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
-        .then(function (reg) {
-          console.log('[SW] registered, scope:', reg.scope);
-          if (reg.waiting) {
-            console.log('[SW] waiting worker on load — showing banner');
-            banner.style.display = '';
-          }
-          // Poll for updates every 60 s (helps when app runs as installed PWA)
-          setInterval(function () { reg.update(); }, 60000);
-        })
-        .catch(function (e) { console.warn('[SW] registration failed:', e); });
-
-      navigator.serviceWorker.addEventListener('controllerchange', function () {
-        console.log('[SW] controllerchange, hadController:', hadController);
-        if (hadController) banner.style.display = '';
-      });
-    }());
-  </script>
 </body>
 </html>

@@ -123,6 +123,14 @@ const addBookmarkBtn  = document.getElementById('addBookmarkBtn');
 const returnBtn       = document.getElementById('returnBtn');
 const bookmarksList   = document.getElementById('bookmarksList');
 const speedDisplay    = document.getElementById('speedDisplay');
+const updateBanner    = document.getElementById('updateBanner');
+const updateBannerText= document.getElementById('updateBannerText') || updateBanner?.querySelector('span');
+const updateBtn       = document.getElementById('updateBtn');
+const updateDismiss   = document.getElementById('updateDismiss');
+const appVersionValue = document.getElementById('appVersionValue');
+const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+
+const APP_VERSION = window.APP_VERSION || 'dev';
 
 // Sheet elements
 const chaptersOverlay  = document.getElementById('chaptersOverlay');
@@ -138,6 +146,118 @@ const guideOverlay     = document.getElementById('guideOverlay');
 const guideClose       = document.getElementById('guideClose');
 const helpBtn          = document.getElementById('helpBtn');
 const guideContent     = document.getElementById('guideContent');
+
+// ===== App Version / Service Worker =====
+let swRegistration = null;
+let swUpdateReady = false;
+let swManualCheckInFlight = false;
+let swRefreshPending = false;
+
+function setAppVersionUI() {
+  if (appVersionValue) appVersionValue.textContent = `v${APP_VERSION}`;
+}
+
+function showUpdateBanner(version = null) {
+  swUpdateReady = true;
+  if (updateBannerText) {
+    updateBannerText.textContent = version ? `Version ${version} is ready` : 'New version available';
+  }
+  if (updateBanner) updateBanner.hidden = false;
+}
+
+function hideUpdateBanner() {
+  if (updateBanner) updateBanner.hidden = true;
+}
+
+function bindWaitingWorker(reg) {
+  if (!reg) return;
+  swRegistration = reg;
+  if (reg.waiting) showUpdateBanner();
+}
+
+function watchInstallingWorker(worker, reg) {
+  if (!worker) return;
+  worker.addEventListener('statechange', () => {
+    if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+      bindWaitingWorker(reg);
+      if (swManualCheckInFlight) showToast('Update found. Tap Update.');
+    }
+  });
+}
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+    swRegistration = reg;
+    bindWaitingWorker(reg);
+
+    if (reg.installing) watchInstallingWorker(reg.installing, reg);
+    reg.addEventListener('updatefound', () => watchInstallingWorker(reg.installing, reg));
+
+    setInterval(() => {
+      reg.update().catch(() => {});
+    }, 60000);
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (swRefreshPending) return;
+      swRefreshPending = true;
+      window.location.reload();
+    });
+  } catch (e) {
+    console.warn('[SW] registration failed:', e);
+  }
+}
+
+async function checkForUpdates({ manual = false } = {}) {
+  if (!('serviceWorker' in navigator)) {
+    if (manual) showToast('Updates are not supported here');
+    return;
+  }
+
+  if (!swRegistration) {
+    swRegistration = await navigator.serviceWorker.getRegistration('./') || await navigator.serviceWorker.getRegistration();
+  }
+
+  if (!swRegistration) {
+    if (manual) showToast('Service worker is not ready yet');
+    return;
+  }
+
+  if (swRegistration.waiting) {
+    showUpdateBanner();
+    if (manual) showToast('Update is ready');
+    return;
+  }
+
+  swManualCheckInFlight = manual;
+  try {
+    await swRegistration.update();
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (swRegistration.waiting || swUpdateReady) {
+      showUpdateBanner();
+      if (manual) showToast('Update is ready');
+    } else if (manual) {
+      showToast(`You already have v${APP_VERSION}`);
+    }
+  } catch (e) {
+    console.warn('[SW] update check failed:', e);
+    if (manual) showToast('Update check failed');
+  } finally {
+    swManualCheckInFlight = false;
+  }
+}
+
+updateDismiss?.addEventListener('click', hideUpdateBanner);
+updateBtn?.addEventListener('click', () => {
+  if (swRegistration?.waiting) {
+    hideUpdateBanner();
+    swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    return;
+  }
+  checkForUpdates({ manual: true });
+});
+checkUpdatesBtn?.addEventListener('click', () => checkForUpdates({ manual: true }));
 
 // ===== Web Audio / Visualizer =====
 let audioCtx = null, analyser = null;
@@ -946,15 +1066,19 @@ async function clearLibrary() {
 
   state.library = [];
   state.currentId = null;
+  state.preBookmarkTime = null;
 
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(PROGRESS_KEY);
   localStorage.removeItem(CURRENT_KEY);
+  localStorage.removeItem(BOOKMARKS_KEY);
   await dbClearAll();
 
   setCoverImage(null);
   hideContinueBanner();
   resetPlayerUI();
+  if (returnBtn) returnBtn.hidden = true;
+  renderBookmarks();
   renderAll();
   closeAllSheets();
   showToast('Library cleared');
@@ -1127,7 +1251,7 @@ playlistItems.addEventListener('click', e => {
 function toggleGroup(groupId) {
   const group = state.library.find(g => g.type === 'group' && g.id === groupId);
   if (!group) return;
-  group.collapsed = (group.collapsed !== false);
+  group.collapsed = !group.collapsed;
   saveLibraryMeta();
   renderLibrary();
 }
@@ -1136,6 +1260,7 @@ async function removeGroup(groupId) {
   const idx = state.library.findIndex(g => g.type === 'group' && g.id === groupId);
   if (idx === -1) return;
   const group = state.library[idx];
+  const removedTrackIds = group.tracks.map(t => t.id);
   let stopPlayback = false;
   for (const t of group.tracks) {
     if (t.url) URL.revokeObjectURL(t.url);
@@ -1150,6 +1275,7 @@ async function removeGroup(groupId) {
     if (stopPlayback) setCoverImage(null);
   }
   state.library.splice(idx, 1);
+  removeBookmarksByTrackIds(removedTrackIds);
   saveLibraryMeta();
   if (stopPlayback) resetPlayer();
   renderAll();
@@ -1163,6 +1289,7 @@ async function removeSingle(id) {
   if (book.url) URL.revokeObjectURL(book.url);
   state.library.splice(idx, 1);
   clearProgress(id);
+  removeBookmarksByTrackIds([id]);
   saveLibraryMeta();
   await dbDelete(id);
   if (state.currentId === id) resetPlayer();
@@ -1179,6 +1306,7 @@ async function removeTrackFromGroup(trackId) {
     if (track.url) URL.revokeObjectURL(track.url);
     item.tracks.splice(tIdx, 1);
     clearProgress(trackId);
+    removeBookmarksByTrackIds([trackId]);
     await dbDelete(trackId);
     if (item.tracks.length === 0) state.library.splice(state.library.indexOf(item), 1);
     saveLibraryMeta();
@@ -1211,6 +1339,17 @@ function loadBookmarks() {
 
 function storeBookmarks(bookmarks) {
   try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks)); } catch {}
+}
+
+function removeBookmarksByTrackIds(trackIds) {
+  if (!trackIds?.length) return;
+  const blockedIds = new Set(trackIds);
+  storeBookmarks(loadBookmarks().filter(b => !blockedIds.has(b.trackId)));
+  if (state.preBookmarkTime && blockedIds.has(state.preBookmarkTime.trackId)) {
+    state.preBookmarkTime = null;
+    if (returnBtn) returnBtn.hidden = true;
+  }
+  renderBookmarks();
 }
 
 function addBookmark() {
@@ -1444,6 +1583,8 @@ document.addEventListener('keydown', e => {
 // ===== Init =====
 async function init() {
   initMediaSession();
+  setAppVersionUI();
+  await registerServiceWorker();
 
   try { db = await openDB(); } catch (e) { console.warn('IndexedDB unavailable:', e); }
 
@@ -1511,5 +1652,3 @@ async function init() {
 }
 
 init();
-
-// SW update banner logic is handled in the inline <script> in index.html
