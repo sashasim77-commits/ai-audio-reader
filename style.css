@@ -37,6 +37,9 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Fix: author styles (display:flex etc.) can override the hidden attribute */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   overflow: hidden;

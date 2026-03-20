@@ -396,55 +396,64 @@
   <script src="script.js"></script>
   <script>
     (function () {
-      var banner   = document.getElementById('updateBanner');
+      var banner     = document.getElementById('updateBanner');
       var btnUpdate  = document.getElementById('updateBtn');
       var btnDismiss = document.getElementById('updateDismiss');
 
-      // ── Buttons work independently of script.js ──────────────────
+      // ── Dismiss: just hide the banner ────────────────────────────
       btnDismiss.addEventListener('click', function () {
-        banner.hidden = true;
+        banner.style.display = 'none';
       });
 
+      // ── Update: nuke caches + unregister SW + hard reload ────────
       btnUpdate.addEventListener('click', async function () {
-        console.log('[Update] clicked');
-        banner.hidden = true;
+        console.log('[Update] clicked — starting nuclear update');
+        banner.style.display = 'none';
 
-        try {
-          var reg = await navigator.serviceWorker.getRegistration();
-          if (reg && reg.waiting) {
-            console.log('[Update] posting SKIP_WAITING to waiting worker');
-            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-          } else {
-            console.log('[Update] no waiting worker — reloading directly');
-          }
-        } catch (e) {
-          console.warn('[Update] SW error:', e);
+        // 1. Delete every cache entry
+        if ('caches' in window) {
+          try {
+            var keys = await caches.keys();
+            console.log('[Update] deleting caches:', keys);
+            await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+          } catch (e) { console.warn('[Update] cache clear error:', e); }
         }
 
+        // 2. Unregister every service worker
+        if ('serviceWorker' in navigator) {
+          try {
+            var regs = await navigator.serviceWorker.getRegistrations();
+            console.log('[Update] unregistering', regs.length, 'SW(s)');
+            await Promise.all(regs.map(function (r) { return r.unregister(); }));
+          } catch (e) { console.warn('[Update] SW unregister error:', e); }
+        }
+
+        // 3. Hard reload — browser fetches everything fresh from network
         console.log('[Update] reloading');
         window.location.reload(true);
       });
 
-      // ── Service Worker registration ───────────────────────────────
+      // ── Service Worker registration ──────────────────────────────
       if (!('serviceWorker' in navigator)) return;
 
       var hadController = !!navigator.serviceWorker.controller;
 
-      navigator.serviceWorker.register('./sw.js')
+      // updateViaCache:'none' — browser always fetches fresh sw.js, ignores HTTP cache
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then(function (reg) {
           console.log('[SW] registered, scope:', reg.scope);
-          // If a waiting worker already exists on page load — show banner
           if (reg.waiting) {
-            console.log('[SW] waiting worker found on load');
-            banner.hidden = false;
+            console.log('[SW] waiting worker on load — showing banner');
+            banner.style.display = '';
           }
+          // Poll for updates every 60 s (helps when app runs as installed PWA)
+          setInterval(function () { reg.update(); }, 60000);
         })
         .catch(function (e) { console.warn('[SW] registration failed:', e); });
 
-      // New SW took control → show banner (only if there was a previous controller)
       navigator.serviceWorker.addEventListener('controllerchange', function () {
         console.log('[SW] controllerchange, hadController:', hadController);
-        if (hadController) banner.hidden = false;
+        if (hadController) banner.style.display = '';
       });
     }());
   </script>
