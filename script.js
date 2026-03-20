@@ -2,12 +2,12 @@
 
 // ===== State =====
 const state = {
-  // library items: { type:'single', id, name, size, url, duration }
-  //            or: { type:'group',  id, name, collapsed, tracks:[...] }
-  library: [],
-  currentId: null,
-  isPlaying: false,
-  speed: 1,
+  library:         [],
+  currentId:       null,
+  isPlaying:       false,
+  speed:           1,
+  covers:          {},   // groupId -> cover blob URL
+  preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
 };
 
 const STORAGE_KEY  = 'air_library';
@@ -17,7 +17,10 @@ const SPEED_KEY    = 'air_speed';
 const VOLUME_KEY   = 'air_volume';
 const THEME_KEY    = 'air_theme';
 const SLEEP_KEY    = 'air_sleep_end';
+const BOOKMARKS_KEY= 'air_bookmarks';
 const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
+const COVER_NAMES  = /^(cover|folder|front|album|albumart|artwork)\.(jpg|jpeg|png|webp)$/i;
+const SPEED_CYCLE  = [0.75, 1, 1.25, 1.5, 2];
 
 // ===== IndexedDB =====
 const IDB_NAME  = 'AudioReaderDB';
@@ -83,14 +86,14 @@ const playIcon        = playBtn.querySelector('.play-icon');
 const pauseIcon       = playBtn.querySelector('.pause-icon');
 const rewindBtn       = document.getElementById('rewindBtn');
 const forwardBtn      = document.getElementById('forwardBtn');
-const progressBar     = document.getElementById('progressBar');
-const progressFill    = document.getElementById('progressFill');
-const progressThumb   = document.getElementById('progressThumb');
+const progressRange   = document.getElementById('progressBar');
 const currentTimeEl   = document.getElementById('currentTime');
 const durationEl      = document.getElementById('duration');
 const trackTitle      = document.getElementById('trackTitle');
 const trackAuthor     = document.getElementById('trackAuthor');
 const coverArt        = document.getElementById('coverArt');
+const coverArtImg     = document.getElementById('coverArtImg');
+const coverBg         = document.getElementById('coverBg');
 const volumeSlider    = document.getElementById('volumeSlider');
 const libraryPanel    = document.getElementById('libraryPanel');
 const libraryList     = document.getElementById('libraryList');
@@ -98,6 +101,7 @@ const overlay         = document.getElementById('overlay');
 const menuBtn         = document.getElementById('menuBtn');
 const closeLibrary    = document.getElementById('closeLibrary');
 const clearLibraryBtn = document.getElementById('clearLibraryBtn');
+const resetAllBtn     = document.getElementById('resetAllBtn');
 const uploadBtn       = document.getElementById('uploadBtn');
 const fileInput       = document.getElementById('fileInput');
 const folderBtn       = document.getElementById('folderBtn');
@@ -112,13 +116,31 @@ const sleepCancelBtn  = document.getElementById('sleepCancel');
 const sleepCountdown  = document.getElementById('sleepCountdown');
 const sleepTimeEl     = document.getElementById('sleepTime');
 const sleepButtons    = [...document.querySelectorAll('.sleep-btn[data-minutes]')];
-const playlistSection = document.getElementById('playlistSection');
 const playlistCount   = document.getElementById('playlistCount');
 const playlistItems   = document.getElementById('playlistItems');
 const vizCanvas       = document.getElementById('vizCanvas');
+const addBookmarkBtn  = document.getElementById('addBookmarkBtn');
+const returnBtn       = document.getElementById('returnBtn');
+const bookmarksList   = document.getElementById('bookmarksList');
+const speedDisplay    = document.getElementById('speedDisplay');
+
+// Sheet elements
+const chaptersOverlay  = document.getElementById('chaptersOverlay');
+const chaptersClose    = document.getElementById('chaptersClose');
+const chaptersBtn      = document.getElementById('chaptersBtn');
+const bookmarksOverlay = document.getElementById('bookmarksOverlay');
+const bookmarksClose   = document.getElementById('bookmarksClose');
+const bookmarksSheetBtn= document.getElementById('bookmarksSheetBtn');
+const settingsOverlay  = document.getElementById('settingsOverlay');
+const settingsClose    = document.getElementById('settingsClose');
+const settingsBtn      = document.getElementById('settingsBtn');
+const guideOverlay     = document.getElementById('guideOverlay');
+const guideClose       = document.getElementById('guideClose');
+const helpBtn          = document.getElementById('helpBtn');
+const guideContent     = document.getElementById('guideContent');
 
 // ===== Web Audio / Visualizer =====
-let audioCtx = null, analyser = null, vizRAF = null;
+let audioCtx = null, analyser = null;
 let cachedGrad = null, cachedGradH = 0;
 
 async function initAudioCtx() {
@@ -127,8 +149,8 @@ async function initAudioCtx() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.resume();
     analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 128;                // 64 frequency bins
-    analyser.smoothingTimeConstant = 0.82;
+    analyser.fftSize = 128;
+    analyser.smoothingTimeConstant = 0.85;
     const src = audioCtx.createMediaElementSource(audio);
     src.connect(analyser);
     analyser.connect(audioCtx.destination);
@@ -140,7 +162,7 @@ async function initAudioCtx() {
 }
 
 function tickViz() {
-  vizRAF = requestAnimationFrame(tickViz);
+  requestAnimationFrame(tickViz);
   if (!analyser || !vizCanvas) return;
 
   const ctx = vizCanvas.getContext('2d');
@@ -148,7 +170,6 @@ function tickViz() {
   const W   = vizCanvas.offsetWidth;
   const H   = vizCanvas.offsetHeight;
 
-  // Resize canvas to match CSS size (invalidates cached gradient)
   if (vizCanvas.width !== W * dpr || vizCanvas.height !== H * dpr) {
     vizCanvas.width  = W * dpr;
     vizCanvas.height = H * dpr;
@@ -156,17 +177,17 @@ function tickViz() {
     cachedGrad = null;
   }
 
-  const bins  = Math.floor(analyser.frequencyBinCount * 0.65); // lower spectrum
+  // Only use lower 65% of frequency bins
+  const bins  = Math.floor(analyser.frequencyBinCount * 0.65);
   const data  = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteFrequencyData(data);
 
   ctx.clearRect(0, 0, W, H);
 
-  // Cache gradient
   if (!cachedGrad || cachedGradH !== H) {
     cachedGrad  = ctx.createLinearGradient(0, H, 0, 0);
     cachedGrad.addColorStop(0,   '#00f5d4');
-    cachedGrad.addColorStop(0.45,'#7b2fff');
+    cachedGrad.addColorStop(0.5, '#7b2fff');
     cachedGrad.addColorStop(1,   '#ff2d78');
     cachedGradH = H;
   }
@@ -176,11 +197,12 @@ function tickViz() {
 
   ctx.fillStyle = cachedGrad;
   ctx.shadowColor = '#00f5d4';
-  ctx.shadowBlur  = state.isPlaying ? 8 : 0;
+  ctx.shadowBlur  = state.isPlaying ? 4 : 0;
 
   for (let i = 0; i < bins; i++) {
     const v    = data[i] / 255;
-    const barH = Math.max(2, v * H * 0.96);
+    // Bars max at 32% of canvas height — subtle background element (3× smaller than 96%)
+    const barH = Math.max(1, v * H * 0.32);
     ctx.fillRect(i * (barW + gap), H - barH, barW, barH);
   }
 }
@@ -219,8 +241,151 @@ function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+// ===== Sheet Management =====
+function openSheet(overlayEl) {
+  closeAllSheets();
+  overlayEl.classList.add('open');
+}
+
+function closeSheet(overlayEl) {
+  overlayEl?.classList.remove('open');
+}
+
+function closeAllSheets() {
+  [chaptersOverlay, bookmarksOverlay, settingsOverlay, guideOverlay].forEach(o => o?.classList.remove('open'));
+}
+
+// Close sheet when clicking backdrop (outside the sheet itself)
+[chaptersOverlay, bookmarksOverlay, settingsOverlay, guideOverlay].forEach(overlay => {
+  overlay?.addEventListener('click', e => {
+    if (e.target === overlay) closeSheet(overlay);
+  });
+});
+
+chaptersBtn?.addEventListener('click',       () => { renderPlaylist(); openSheet(chaptersOverlay); });
+chaptersClose?.addEventListener('click',     () => closeSheet(chaptersOverlay));
+bookmarksSheetBtn?.addEventListener('click', () => { renderBookmarks(); openSheet(bookmarksOverlay); });
+bookmarksClose?.addEventListener('click',    () => closeSheet(bookmarksOverlay));
+settingsBtn?.addEventListener('click',       () => openSheet(settingsOverlay));
+settingsClose?.addEventListener('click',     () => closeSheet(settingsOverlay));
+helpBtn?.addEventListener('click',           () => { renderGuide(); openSheet(guideOverlay); });
+guideClose?.addEventListener('click',        () => closeSheet(guideOverlay));
+
+// ===== PWA Install Guide =====
+function detectPlatform() {
+  const ua = navigator.userAgent;
+  if (/ipad|iphone|ipod/i.test(ua)) return 'ios';
+  if (/android/i.test(ua))          return 'android';
+  return 'desktop';
+}
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+// SVG icons used inline in guide steps
+const SVG_IOS_SHARE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="12" y1="2" x2="12" y2="13"/><polyline points="8 6 12 2 16 6"/><path d="M20 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/></svg>`;
+const SVG_ANDROID_DOTS = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>`;
+const SVG_CHECKMARK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="28" height="28"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function guideStep(num, html) {
+  return `<div class="guide-step">
+    <div class="guide-step-num">${num}</div>
+    <div class="guide-step-body">${html}</div>
+  </div>`;
+}
+
+function renderGuide() {
+  if (!guideContent) return;
+  const platform  = detectPlatform();
+  const installed = isStandalone();
+
+  if (installed) {
+    guideContent.innerHTML = `
+      <div class="guide-installed">
+        <div class="guide-installed-icon">${SVG_CHECKMARK}</div>
+        <h3>УЖЕ УСТАНОВЛЕНО</h3>
+        <p>Приложение работает как PWA<br>и добавлено на главный экран.</p>
+      </div>`;
+    return;
+  }
+
+  const iosPill     = `<span class="guide-icon-pill">${SVG_IOS_SHARE} Поделиться</span>`;
+  const androidPill = `<span class="guide-icon-pill android">${SVG_ANDROID_DOTS} Меню</span>`;
+
+  const iosSteps = `
+    <div class="guide-platform-header">
+      <div class="guide-platform-icon ios-icon">🍎</div>
+      <div>
+        <div class="guide-platform-title">iPhone / iPad</div>
+        <div class="guide-platform-sub">Safari Browser</div>
+      </div>
+    </div>
+    <div class="guide-steps">
+      ${guideStep(1, 'Откройте эту страницу в браузере <strong>Safari</strong>')}
+      ${guideStep(2, `Нажмите кнопку ${iosPill} <strong>внизу</strong> экрана`)}
+      ${guideStep(3, 'Прокрутите вниз и нажмите <strong>«На экран "Домой"»</strong>')}
+      ${guideStep(4, 'Нажмите <strong>«Добавить»</strong> в правом верхнем углу')}
+    </div>
+    <div class="guide-note">
+      <strong>Важно:</strong> кнопка Поделиться доступна только в Safari.<br>
+      В Chrome на iOS её нет.
+    </div>`;
+
+  const androidSteps = `
+    <div class="guide-platform-header">
+      <div class="guide-platform-icon android-icon">🤖</div>
+      <div>
+        <div class="guide-platform-title">Android</div>
+        <div class="guide-platform-sub">Chrome Browser</div>
+      </div>
+    </div>
+    <div class="guide-steps">
+      ${guideStep(1, 'Откройте эту страницу в браузере <strong>Chrome</strong>')}
+      ${guideStep(2, `Нажмите ${androidPill} <strong>в правом верхнем углу</strong> экрана`)}
+      ${guideStep(3, 'Выберите <strong>«Добавить на главный экран»</strong> или <strong>«Установить приложение»</strong>')}
+      ${guideStep(4, 'Нажмите <strong>«Добавить»</strong> или <strong>«Установить»</strong>')}
+    </div>
+    <div class="guide-note">
+      <strong>Совет:</strong> Chrome может сам предложить установку — ищи баннер внизу экрана.
+    </div>`;
+
+  if (platform === 'ios') {
+    guideContent.innerHTML = iosSteps;
+  } else if (platform === 'android') {
+    guideContent.innerHTML = androidSteps;
+  } else {
+    // Desktop — show both
+    guideContent.innerHTML = `
+      ${iosSteps}
+      <div class="guide-divider">ANDROID</div>
+      ${androidSteps}`;
+  }
+}
+
+// ===== Speed Cycling =====
+function applySpeed(v) {
+  state.speed = v;
+  audio.playbackRate = v;
+  try { localStorage.setItem(SPEED_KEY, v); } catch {}
+  if (speedDisplay) {
+    const valEl = speedDisplay.querySelector('.speed-val');
+    if (valEl) valEl.textContent = v + '×';
+  }
+}
+
+function loadSpeed() { return parseFloat(localStorage.getItem(SPEED_KEY) || '1'); }
+
+function cycleSpeed() {
+  const idx = SPEED_CYCLE.indexOf(state.speed);
+  const next = SPEED_CYCLE[(idx + 1) % SPEED_CYCLE.length];
+  applySpeed(next);
+  showToast(`Speed: ${next}×`);
+}
+
+speedDisplay?.addEventListener('click', cycleSpeed);
+
 // ===== Library Helpers =====
-// Get track + its parent group (or null for singles)
 function findTrack(id) {
   for (const item of state.library) {
     if (item.type === 'single' && item.id === id) return { track: item, group: null };
@@ -232,7 +397,6 @@ function findTrack(id) {
   return null;
 }
 
-// All playable tracks in order
 function getFlatTracks() {
   const out = [];
   for (const item of state.library) {
@@ -274,7 +438,7 @@ function loadLibraryMeta() {
   try {
     const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
     return data.map(item => {
-      if (!item.type) return { ...item, type: 'single', url: null }; // backward compat
+      if (!item.type) return { ...item, type: 'single', url: null };
       if (item.type === 'group') return { ...item, tracks: item.tracks.map(t => ({ ...t, url: null })) };
       return { ...item, url: null };
     });
@@ -313,19 +477,6 @@ function throttledSave() {
   }
 }
 
-// ===== Speed Persistence =====
-function saveSpeed(v) { try { localStorage.setItem(SPEED_KEY, v); } catch {} }
-function loadSpeed()  { return parseFloat(localStorage.getItem(SPEED_KEY) || '1'); }
-
-function applySpeed(v) {
-  state.speed = v;
-  audio.playbackRate = v;
-  saveSpeed(v);
-  document.querySelectorAll('.speed-btn').forEach(b =>
-    b.classList.toggle('active', parseFloat(b.dataset.speed) === v)
-  );
-}
-
 // ===== Volume Persistence =====
 function saveVolume(v) { try { localStorage.setItem(VOLUME_KEY, v); } catch {} }
 function loadVolume()  { return Math.max(0, Math.min(1, parseFloat(localStorage.getItem(VOLUME_KEY) ?? '1'))); }
@@ -339,23 +490,40 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (!btn) return;
   if (theme === 'dark') {
-    btn.innerHTML = SVG_SUN;
-    btn.title = 'Switch to light theme';
+    btn.innerHTML = SVG_SUN; btn.title = 'Switch to light theme';
     btn.setAttribute('aria-label', 'Switch to light theme');
   } else {
-    btn.innerHTML = SVG_MOON;
-    btn.title = 'Switch to dark theme';
+    btn.innerHTML = SVG_MOON; btn.title = 'Switch to dark theme';
     btn.setAttribute('aria-label', 'Switch to dark theme');
   }
   try { localStorage.setItem(THEME_KEY, theme); } catch {}
 }
 
+// ===== Cover Art =====
+function setCoverImage(url) {
+  if (url) {
+    coverBg.style.backgroundImage = `url(${url})`;
+    coverBg.classList.add('visible');
+    coverArtImg.src = url;
+    coverArtImg.classList.add('visible');
+  } else {
+    coverBg.style.backgroundImage = '';
+    coverBg.classList.remove('visible');
+    coverArtImg.src = '';
+    coverArtImg.classList.remove('visible');
+  }
+}
+
+function applyCoverForTrack(track, group) {
+  setCoverImage(group ? (state.covers[group.id] || null) : null);
+}
+
 // ===== Continue Banner =====
 function showContinueBanner(track, group, pos) {
-  continueBookName.textContent = group ? `${group.name} › ${track.name}` : track.name;
-  continuePos.textContent      = 'from ' + formatTime(pos);
-  continueBanner.dataset.trackId = track.id;
-  continueBanner.dataset.pos     = pos;
+  continueBookName.textContent    = group ? `${group.name} › ${track.name}` : track.name;
+  continuePos.textContent         = 'from ' + formatTime(pos);
+  continueBanner.dataset.trackId  = track.id;
+  continueBanner.dataset.pos      = pos;
   continueBanner.hidden = false;
 }
 
@@ -369,13 +537,12 @@ continueBtn.addEventListener('click', () => {
   if (!ctx || !ctx.track.url) { showToast('Re-upload required'); return; }
   loadAndSeek(id, pos);
 });
-
 continueDismiss.addEventListener('click', hideContinueBanner);
 
 function loadAndSeek(id, pos) {
   const ctx = findTrack(id);
   if (!ctx) return;
-  const { track } = ctx;
+  const { track, group } = ctx;
   state.currentId = id;
   saveCurrentId(id);
   audio.src = track.url;
@@ -383,7 +550,8 @@ function loadAndSeek(id, pos) {
   audio.addEventListener('loadedmetadata', () => {
     audio.currentTime = Math.min(pos, audio.duration - 1);
   }, { once: true });
-  updatePlayerTitle(ctx.track, ctx.group);
+  updatePlayerTitle(track, group);
+  applyCoverForTrack(track, group);
   playAudio();
   renderAll();
 }
@@ -396,11 +564,10 @@ function renderLibrary() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="52" height="52">
           <path d="M9 19V6l12-3v13M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm12-3c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2z"/>
         </svg>
-        <p>No audiobooks yet.<br/>Use 📁 to add a folder<br/>or ↑ to add files.</p>
+        <p>No audiobooks yet.<br/>Use ⚙ Settings to add files.</p>
       </div>`;
     return;
   }
-
   libraryList.innerHTML = state.library.map(item =>
     item.type === 'group' ? renderGroup(item) : renderSingle(item)
   ).join('');
@@ -415,32 +582,25 @@ function renderGroup(group) {
   const pct      = total > 0 ? Math.round((consumed / total) * 100) : 0;
   const hasActive= tracks.some(t => t.id === state.currentId);
   const expanded = group.collapsed === false;
+  const coverUrl = state.covers[group.id];
+
+  const coverHtml = coverUrl
+    ? `<img src="${coverUrl}" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
+    : `<div class="group-cover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>`;
 
   return `
     <div class="library-group ${hasActive ? 'active' : ''} ${expanded ? 'expanded' : ''}" data-group-id="${group.id}">
       <div class="group-header">
-        <div class="group-toggle">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="9 18 15 12 9 6"/>
-          </svg>
-        </div>
-        <div class="group-cover">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
-        </div>
+        <div class="group-toggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        ${coverHtml}
         <div class="group-info">
           <div class="group-name">${escapeHtml(group.name)}</div>
           <div class="group-meta">${tracks.length} tracks · ${formatTime(total)}${pct > 0 ? ` · ${pct}%` : ''}</div>
           <div class="library-progress-bar"><div class="library-progress-fill" style="width:${pct}%"></div></div>
         </div>
         <div class="group-actions">
-          <button class="library-item-delete" data-delete-group="${group.id}" title="Remove book">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-            </svg>
+          <button class="library-item-delete" data-delete-group="${group.id}" title="Remove">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
       </div>
@@ -473,11 +633,7 @@ function renderTrackInGroup(track, group) {
       <div class="library-item-actions">
         ${pct > 0 ? `<button class="lib-action-btn" data-reset="${track.id}" title="Reset">↩</button>` : ''}
         <button class="library-item-delete" data-delete-track="${track.id}" title="Remove">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6M14 11v6"/>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
         </button>
       </div>
     </div>`;
@@ -506,23 +662,18 @@ function renderSingle(book) {
       <div class="library-item-actions">
         ${pct > 0 ? `<button class="lib-action-btn" data-reset="${book.id}" title="Reset">↩</button>` : ''}
         <button class="library-item-delete" data-delete-single="${book.id}" title="Remove">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6M14 11v6"/>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
         </button>
       </div>
     </div>`;
 }
 
-// ===== Inline Playlist Render =====
+// ===== Playlist / Chapters Render =====
 function renderPlaylist() {
   const flat = getFlatTracks();
-  if (flat.length === 0) { playlistSection.hidden = true; return; }
+  if (!playlistCount || !playlistItems) return;
 
-  playlistSection.hidden = false;
-  playlistCount.textContent = flat.length + ' track' + (flat.length !== 1 ? 's' : '');
+  playlistCount.textContent = flat.length ? flat.length + ' track' + (flat.length !== 1 ? 's' : '') : '';
 
   let html = '';
   let trackIdx = 0;
@@ -530,15 +681,13 @@ function renderPlaylist() {
   for (const item of state.library) {
     if (item.type === 'group') {
       html += `<div class="playlist-group-header">${escapeHtml(item.name)}</div>`;
-      for (const t of item.tracks) {
-        html += renderPlaylistItem(t, ++trackIdx);
-      }
+      for (const t of item.tracks) { html += renderPlaylistItem(t, ++trackIdx); }
     } else {
       html += renderPlaylistItem(item, ++trackIdx);
     }
   }
 
-  playlistItems.innerHTML = html;
+  playlistItems.innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--text2);font-size:12px;">No tracks</div>';
 }
 
 function renderPlaylistItem(track, idx) {
@@ -561,7 +710,7 @@ function renderPlaylistItem(track, idx) {
     </div>`;
 }
 
-function renderAll() { renderLibrary(); renderPlaylist(); }
+function renderAll() { renderLibrary(); }
 
 // ===== Player =====
 function updatePlayerTitle(track, group) {
@@ -569,7 +718,7 @@ function updatePlayerTitle(track, group) {
   trackAuthor.textContent = (group ? group.name + ' · ' : '') + formatSize(track.size);
 }
 
-function loadBook(id) {
+function loadBook(id, fromBookmark = false) {
   const ctx = findTrack(id);
   if (!ctx) return;
   const { track, group } = ctx;
@@ -577,6 +726,11 @@ function loadBook(id) {
 
   if (state.currentId && state.currentId !== id && audio.currentTime > 1) {
     saveProgress(state.currentId, audio.currentTime);
+  }
+
+  if (!fromBookmark) {
+    state.preBookmarkTime = null;
+    if (returnBtn) returnBtn.hidden = true;
   }
 
   state.currentId = id;
@@ -587,6 +741,7 @@ function loadBook(id) {
   audio.playbackRate = state.speed;
 
   updatePlayerTitle(track, group);
+  applyCoverForTrack(track, group);
 
   const savedPos = loadProgress(id);
   audio.addEventListener('loadedmetadata', () => {
@@ -598,6 +753,8 @@ function loadBook(id) {
     trackAuthor.textContent = (group ? group.name + ' · ' : '') + formatSize(track.size) + ' · ' + formatTime(audio.duration);
     renderAll();
     updateMediaSession(track, group);
+    // Refresh chapters panel if open
+    if (chaptersOverlay.classList.contains('open')) renderPlaylist();
   }, { once: true });
 
   playAudio();
@@ -638,11 +795,14 @@ function playPrev() {
 // ===== Media Session =====
 function updateMediaSession(track, group) {
   if (!('mediaSession' in navigator)) return;
+  const coverUrl = group ? (state.covers[group.id] || null) : null;
   navigator.mediaSession.metadata = new MediaMetadata({
     title:  track.name,
     artist: group ? group.name : 'AI Audio Reader',
     album:  'AI Audio Reader',
-    artwork: [{ src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+    artwork: coverUrl
+      ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }]
+      : [{ src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
   });
 }
 
@@ -667,7 +827,8 @@ function initMediaSession() {
 
 // ===== File Upload =====
 async function handleFiles(files) {
-  const audioFiles = Array.from(files)
+  const allFiles   = Array.from(files);
+  const audioFiles = allFiles
     .filter(f => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name))
     .sort((a, b) => {
       const pa = (a.webkitRelativePath || a.name).toLowerCase();
@@ -675,15 +836,23 @@ async function handleFiles(files) {
       return pa.localeCompare(pb, undefined, { numeric: true });
     });
 
+  // Map cover images by folder name
+  const pendingCovers = {};
+  for (const f of allFiles) {
+    if (COVER_NAMES.test(f.name)) {
+      const parts = (f.webkitRelativePath || f.name).split('/');
+      const folder = parts.length >= 2 ? parts[0] : '__root__';
+      if (!pendingCovers[folder]) pendingCovers[folder] = f;
+    }
+  }
+
   if (!audioFiles.length) { showToast('No audio files found'); return; }
 
-  // Separate by source: folder files have a non-empty webkitRelativePath with '/'
   const folderFiles = audioFiles.filter(f => f.webkitRelativePath?.includes('/'));
   const singleFiles = audioFiles.filter(f => !f.webkitRelativePath?.includes('/'));
 
   let added = 0;
 
-  // ---- Group folder files by top-level folder name ----
   const grouped = {};
   for (const f of folderFiles) {
     const folder = f.webkitRelativePath.split('/')[0];
@@ -691,12 +860,21 @@ async function handleFiles(files) {
   }
 
   for (const [folderName, flist] of Object.entries(grouped)) {
-    // Find or create group
     let group = state.library.find(g => g.type === 'group' && g.name === folderName);
-
     if (!group) {
       group = { id: 'g_' + generateId(), type: 'group', name: folderName, collapsed: true, tracks: [] };
       state.library.push(group);
+    }
+
+    const coverFile = pendingCovers[folderName];
+    if (coverFile) {
+      if (state.covers[group.id]) URL.revokeObjectURL(state.covers[group.id]);
+      state.covers[group.id] = URL.createObjectURL(coverFile);
+      await dbPut('cover_' + group.id, coverFile);
+      if (state.currentId) {
+        const ctx = findTrack(state.currentId);
+        if (ctx?.group?.id === group.id) setCoverImage(state.covers[group.id]);
+      }
     }
 
     for (const file of flist) {
@@ -713,7 +891,6 @@ async function handleFiles(files) {
       group.tracks.push({ id, name, size: file.size, url, duration: 0 });
       await dbPut(id, file);
       added++;
-      // Get duration async
       const tmp = new Audio();
       tmp.preload = 'metadata';
       tmp.addEventListener('loadedmetadata', () => {
@@ -725,7 +902,6 @@ async function handleFiles(files) {
     }
   }
 
-  // ---- Single files ----
   for (const file of singleFiles) {
     const name = cleanFileName(file);
     const existing = state.library.find(i => i.type === 'single' && i.name === name && i.size === file.size);
@@ -754,7 +930,6 @@ async function handleFiles(files) {
   renderAll();
   if (added > 0) showToast(`Added ${added} track${added !== 1 ? 's' : ''}`);
 
-  // Auto-load first track if nothing selected
   if (!state.currentId) {
     const first = getFlatTracks().find(t => t.url);
     if (first) { const ctx = findTrack(first.id); updatePlayerTitle(ctx.track, ctx.group); }
@@ -764,16 +939,17 @@ async function handleFiles(files) {
 // ===== Clear Library =====
 async function clearLibrary() {
   if (!state.library.length) { showToast('Library is already empty'); return; }
-  if (!confirm('Clear the entire library? This cannot be undone.')) return;
+  if (!confirm('Clear the entire library?')) return;
 
   audio.pause(); audio.src = '';
   state.isPlaying = false; updatePlayUI();
 
-  // Revoke all blob URLs
   for (const item of state.library) {
     if (item.type === 'single' && item.url) URL.revokeObjectURL(item.url);
     if (item.type === 'group') item.tracks.forEach(t => { if (t.url) URL.revokeObjectURL(t.url); });
   }
+  for (const url of Object.values(state.covers)) URL.revokeObjectURL(url);
+  state.covers = {};
 
   state.library = [];
   state.currentId = null;
@@ -783,24 +959,54 @@ async function clearLibrary() {
   localStorage.removeItem(CURRENT_KEY);
   await dbClearAll();
 
+  setCoverImage(null);
   hideContinueBanner();
-  trackTitle.textContent  = 'SELECT A TRACK';
-  trackAuthor.textContent = 'Upload audio files or a folder';
-  progressFill.style.width = '0%';
-  progressThumb.style.left = '0%';
-  currentTimeEl.textContent = '0:00';
-  durationEl.textContent    = '0:00';
-
+  resetPlayerUI();
   renderAll();
+  closeAllSheets();
   showToast('Library cleared');
 }
 
-// ===== Progress Bar =====
+// ===== Reset ALL Data =====
+async function resetAll() {
+  if (!confirm('Reset ALL data? Library, bookmarks, settings — everything will be deleted.')) return;
+
+  audio.pause(); audio.src = '';
+  state.isPlaying = false;
+
+  for (const item of state.library) {
+    if (item.type === 'single' && item.url) URL.revokeObjectURL(item.url);
+    if (item.type === 'group') item.tracks.forEach(t => { if (t.url) URL.revokeObjectURL(t.url); });
+  }
+  for (const url of Object.values(state.covers)) URL.revokeObjectURL(url);
+
+  state.library          = [];
+  state.currentId        = null;
+  state.covers           = {};
+  state.preBookmarkTime  = null;
+
+  localStorage.clear();
+  await dbClearAll();
+
+  setCoverImage(null);
+  hideContinueBanner();
+  resetPlayerUI();
+  if (returnBtn) returnBtn.hidden = true;
+  applyTheme('dark');
+  applySpeed(1);
+  volumeSlider.value = 1;
+  audio.volume = 1;
+  renderAll();
+  closeAllSheets();
+  showToast('All data reset');
+}
+
+// ===== Progress =====
 function updateProgress() {
   if (!audio.duration) return;
   const pct = (audio.currentTime / audio.duration) * 100;
-  progressFill.style.width  = pct + '%';
-  progressThumb.style.left  = pct + '%';
+  progressRange.value = pct;
+  progressRange.style.setProperty('--p', pct + '%');
   currentTimeEl.textContent = formatTime(audio.currentTime);
   durationEl.textContent    = formatTime(audio.duration);
   if ('mediaSession' in navigator && audio.duration) {
@@ -808,15 +1014,18 @@ function updateProgress() {
   }
 }
 
-function seekFromEvent(e) {
-  const rect   = progressBar.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const pct    = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-  if (audio.duration) { audio.currentTime = pct * audio.duration; updateProgress(); }
+function resetPlayerUI() {
+  progressRange.value = 0;
+  progressRange.style.setProperty('--p', '0%');
+  currentTimeEl.textContent = '0:00';
+  durationEl.textContent    = '0:00';
+  trackTitle.textContent    = 'SELECT A TRACK';
+  trackAuthor.textContent   = 'Open library or add files via settings';
+  updatePlayUI();
 }
 
 // ===== Audio Events =====
-audio.addEventListener('play',  () => { state.isPlaying = true;  updatePlayUI(); renderAll(); });
+audio.addEventListener('play',  () => { state.isPlaying = true;  updatePlayUI(); renderAll(); if (chaptersOverlay.classList.contains('open')) renderPlaylist(); });
 audio.addEventListener('pause', () => {
   state.isPlaying = false; updatePlayUI(); renderAll();
   if (state.currentId) saveProgress(state.currentId, audio.currentTime);
@@ -844,15 +1053,12 @@ playBtn.addEventListener('click', () => {
 rewindBtn.addEventListener('click',  () => { audio.currentTime = Math.max(0, audio.currentTime - 15); updateProgress(); });
 forwardBtn.addEventListener('click', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 15); updateProgress(); });
 
-let dragging = false;
-progressBar.addEventListener('mousedown', e => { dragging = true; seekFromEvent(e); });
-document.addEventListener('mousemove',  e => { if (dragging) seekFromEvent(e); });
-document.addEventListener('mouseup',    () => { dragging = false; });
-progressBar.addEventListener('touchstart', e => { e.preventDefault(); seekFromEvent(e); }, { passive: false });
-progressBar.addEventListener('touchmove',  e => { e.preventDefault(); seekFromEvent(e); }, { passive: false });
-
-document.querySelectorAll('.speed-btn').forEach(btn => {
-  btn.addEventListener('click', () => applySpeed(parseFloat(btn.dataset.speed)));
+progressRange.addEventListener('input', () => {
+  if (audio.duration) {
+    audio.currentTime = (progressRange.value / 100) * audio.duration;
+    currentTimeEl.textContent = formatTime(audio.currentTime);
+    progressRange.style.setProperty('--p', progressRange.value + '%');
+  }
 });
 
 volumeSlider.addEventListener('input', () => {
@@ -867,10 +1073,10 @@ document.getElementById('themeBtn')?.addEventListener('click', () => {
 });
 
 uploadBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', e => { handleFiles(e.target.files); fileInput.value = ''; });
+fileInput.addEventListener('change', e => { handleFiles(e.target.files); fileInput.value = ''; closeAllSheets(); });
 
 folderBtn.addEventListener('click', () => folderInput.click());
-folderInput.addEventListener('change', e => { handleFiles(e.target.files); folderInput.value = ''; });
+folderInput.addEventListener('change', e => { handleFiles(e.target.files); folderInput.value = ''; closeAllSheets(); });
 
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop',     e => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
@@ -879,7 +1085,8 @@ document.addEventListener('drop',     e => { e.preventDefault(); handleFiles(e.d
 menuBtn.addEventListener('click',      openLibrary);
 closeLibrary.addEventListener('click', closeLibraryPanel);
 overlay.addEventListener('click',      closeLibraryPanel);
-clearLibraryBtn.addEventListener('click', clearLibrary);
+clearLibraryBtn?.addEventListener('click', clearLibrary);
+resetAllBtn?.addEventListener('click',     resetAll);
 
 function openLibrary() {
   renderLibrary();
@@ -906,30 +1113,27 @@ libraryList.addEventListener('click', e => {
   if (e.target.closest('[data-reset]')) {
     resetProgress(e.target.closest('[data-reset]').dataset.reset); return;
   }
-  // Group toggle (click anywhere on group-header except action buttons)
-  const groupEl = e.target.closest('.library-group[data-group-id]');
+  const groupEl  = e.target.closest('.library-group[data-group-id]');
   const onAction = e.target.closest('.group-actions, .library-item-actions');
-  if (groupEl && !onAction) {
-    toggleGroup(groupEl.dataset.groupId); return;
-  }
-  // Track click
+  if (groupEl && !onAction) { toggleGroup(groupEl.dataset.groupId); return; }
   const item = e.target.closest('.library-item[data-id]');
   if (item && !onAction) { loadBook(item.dataset.id); closeLibraryPanel(); }
 });
 
-// Inline playlist
+// Chapters sheet playlist
 playlistItems.addEventListener('click', e => {
   const item = e.target.closest('.playlist-item[data-id]');
   if (!item) return;
   const ctx = findTrack(item.dataset.id);
   if (!ctx?.track.url) { showToast('Re-upload required'); return; }
   loadBook(item.dataset.id);
+  closeSheet(chaptersOverlay);
 });
 
 function toggleGroup(groupId) {
   const group = state.library.find(g => g.type === 'group' && g.id === groupId);
   if (!group) return;
-  group.collapsed = (group.collapsed !== false); // toggle
+  group.collapsed = (group.collapsed !== false);
   saveLibraryMeta();
   renderLibrary();
 }
@@ -944,6 +1148,12 @@ async function removeGroup(groupId) {
     clearProgress(t.id);
     await dbDelete(t.id);
     if (t.id === state.currentId) stopPlayback = true;
+  }
+  if (state.covers[group.id]) {
+    URL.revokeObjectURL(state.covers[group.id]);
+    delete state.covers[group.id];
+    await dbDelete('cover_' + group.id);
+    if (stopPlayback) setCoverImage(null);
   }
   state.library.splice(idx, 1);
   saveLibraryMeta();
@@ -988,11 +1198,9 @@ async function removeTrackFromGroup(trackId) {
 function resetPlayer() {
   audio.pause(); audio.src = '';
   state.currentId = null; state.isPlaying = false;
-  saveCurrentId(null); updatePlayUI();
-  trackTitle.textContent  = 'SELECT A TRACK';
-  trackAuthor.textContent = 'Upload audio files or a folder';
-  progressFill.style.width = '0%'; progressThumb.style.left = '0%';
-  currentTimeEl.textContent = '0:00'; durationEl.textContent = '0:00';
+  saveCurrentId(null);
+  setCoverImage(null);
+  resetPlayerUI();
 }
 
 function resetProgress(id) {
@@ -1001,6 +1209,126 @@ function resetProgress(id) {
   renderAll();
   showToast('Progress reset');
 }
+
+// ===== Bookmarks =====
+function loadBookmarks() {
+  try { return JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '[]'); } catch { return []; }
+}
+
+function storeBookmarks(bookmarks) {
+  try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks)); } catch {}
+}
+
+function addBookmark() {
+  if (!state.currentId || !audio.src) { showToast('Nothing playing'); return; }
+  const ctx = findTrack(state.currentId);
+  if (!ctx) return;
+  const { track, group } = ctx;
+  const bookmark = {
+    id:          generateId(),
+    trackId:     state.currentId,
+    time:        Math.max(0, audio.currentTime - 10),
+    chapterName: track.name,
+    groupName:   group ? group.name : null,
+  };
+  const bookmarks = loadBookmarks();
+  bookmarks.push(bookmark);
+  storeBookmarks(bookmarks);
+  renderBookmarks();
+  showToast(`Bookmark: ${formatTime(bookmark.time)}`);
+}
+
+function deleteBookmark(id) {
+  storeBookmarks(loadBookmarks().filter(b => b.id !== id));
+  renderBookmarks();
+}
+
+function jumpToBookmark(bookmark) {
+  if (state.currentId) {
+    state.preBookmarkTime = { trackId: state.currentId, time: audio.currentTime };
+  }
+
+  const ctx = findTrack(bookmark.trackId);
+  if (!ctx) { showToast('Track not found'); return; }
+  if (!ctx.track.url) { showToast('Re-upload required'); return; }
+
+  if (returnBtn) returnBtn.hidden = false;
+
+  if (bookmark.trackId === state.currentId) {
+    audio.currentTime = bookmark.time;
+    updateProgress();
+    showToast(`Jumped to ${formatTime(bookmark.time)}`);
+    closeSheet(bookmarksOverlay);
+  } else {
+    const { track, group } = ctx;
+    state.currentId = bookmark.trackId;
+    saveCurrentId(bookmark.trackId);
+    hideContinueBanner();
+    audio.src = track.url;
+    audio.playbackRate = state.speed;
+    audio.addEventListener('loadedmetadata', () => {
+      audio.currentTime = Math.min(bookmark.time, audio.duration - 1);
+    }, { once: true });
+    updatePlayerTitle(track, group);
+    applyCoverForTrack(track, group);
+    playAudio();
+    renderAll();
+    closeSheet(bookmarksOverlay);
+  }
+}
+
+function returnToPreBookmark() {
+  if (!state.preBookmarkTime) return;
+  const { trackId, time } = state.preBookmarkTime;
+  state.preBookmarkTime = null;
+  if (returnBtn) returnBtn.hidden = true;
+
+  if (trackId === state.currentId) {
+    audio.currentTime = time;
+    updateProgress();
+    showToast('Returned');
+  } else {
+    const ctx = findTrack(trackId);
+    if (!ctx || !ctx.track.url) { showToast('Track not available'); return; }
+    loadAndSeek(trackId, time);
+    showToast('Returned');
+  }
+}
+
+function renderBookmarks() {
+  if (!bookmarksList) return;
+  const bookmarks = loadBookmarks();
+
+  if (bookmarks.length === 0) {
+    bookmarksList.innerHTML = `<div class="bookmarks-empty">No bookmarks yet.<br>Press the flag button while playing.</div>`;
+    return;
+  }
+
+  bookmarksList.innerHTML = bookmarks.map(b => `
+    <div class="bookmark-item" data-bid="${b.id}">
+      <button class="bookmark-jump" data-bid="${b.id}">
+        <span class="bookmark-time-label">${formatTime(b.time)}</span>
+        <span class="bookmark-chapter">${escapeHtml(b.chapterName)}${b.groupName ? ` · ${escapeHtml(b.groupName)}` : ''}</span>
+      </button>
+      <button class="bookmark-delete-btn" data-delete-bookmark="${b.id}" title="Delete">×</button>
+    </div>
+  `).join('');
+}
+
+// Bookmarks sheet events
+document.getElementById('bookmarksOverlay')?.addEventListener('click', e => {
+  const deleteBtn = e.target.closest('[data-delete-bookmark]');
+  if (deleteBtn) { deleteBookmark(deleteBtn.dataset.deleteBookmark); return; }
+
+  const jumpBtn = e.target.closest('.bookmark-jump[data-bid]');
+  if (jumpBtn) {
+    const bm = loadBookmarks().find(b => b.id === jumpBtn.dataset.bid);
+    if (bm) jumpToBookmark(bm);
+  }
+});
+
+addBookmarkBtn?.addEventListener('click', addBookmark);
+returnBtn?.addEventListener('click',      returnToPreBookmark);
 
 // ===== Sleep Timer =====
 const SLEEP_FADE_MS = 5000;
@@ -1024,33 +1352,23 @@ function loadSleepState() {
     const parsed = JSON.parse(raw);
     if (!parsed?.endTime) return null;
     return { endTime: parsed.endTime, minutes: parsed.minutes || 0 };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-function syncAudioVolume() {
-  audio.volume = parseFloat(volumeSlider.value);
-}
+function syncAudioVolume() { audio.volume = parseFloat(volumeSlider.value); }
 
 function updateSleepUI(minutes = 0) {
   const active = sleepEndTime > Date.now();
   sleepButtons.forEach(btn => btn.classList.toggle('active', active && parseInt(btn.dataset.minutes, 10) === minutes));
   if (sleepCancelBtn) sleepCancelBtn.hidden = !active;
   if (sleepCountdown) sleepCountdown.hidden = !active;
-  if (!active && sleepTimeEl) {
-    sleepTimeEl.textContent = '';
-    sleepTimeEl.classList.remove('warning');
-  }
+  if (!active && sleepTimeEl) { sleepTimeEl.textContent = ''; sleepTimeEl.classList.remove('warning'); }
 }
 
 function resetSleepTimerState({ restoreVolume = true } = {}) {
   clearTimeout(sleepTimerId);
   clearInterval(sleepIntervalId);
-  sleepTimerId = null;
-  sleepIntervalId = null;
-  sleepEndTime = 0;
-  sleepFadeToken++;
+  sleepTimerId = null; sleepIntervalId = null; sleepEndTime = 0; sleepFadeToken++;
   saveSleepState(0);
   if (restoreVolume) syncAudioVolume();
   updateSleepUI();
@@ -1069,11 +1387,7 @@ function clearSleepTimer(toast = true) {
 function tickSleepDisplay() {
   if (!sleepTimeEl) return;
   const remaining = sleepEndTime - Date.now();
-  if (remaining <= 0) {
-    sleepTimeEl.textContent = '0:00';
-    sleepTimeEl.classList.add('warning');
-    return;
-  }
+  if (remaining <= 0) { sleepTimeEl.textContent = '0:00'; sleepTimeEl.classList.add('warning'); return; }
   const mins = Math.floor(remaining / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
   sleepTimeEl.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
@@ -1083,7 +1397,6 @@ function tickSleepDisplay() {
 async function fadeAndPause(durationMs = SLEEP_FADE_MS) {
   const token = ++sleepFadeToken;
   const savedVol = parseFloat(volumeSlider.value);
-  // Smooth fade over the final seconds before pause.
   if (state.isPlaying && durationMs > 0) {
     const startedAt = performance.now();
     while (sleepFadeToken === token) {
@@ -1093,7 +1406,6 @@ async function fadeAndPause(durationMs = SLEEP_FADE_MS) {
       await new Promise(requestAnimationFrame);
     }
   }
-
   if (sleepFadeToken !== token) return;
   if (state.isPlaying) pauseAudio();
   resetSleepTimerState();
@@ -1102,22 +1414,18 @@ async function fadeAndPause(durationMs = SLEEP_FADE_MS) {
 
 function scheduleSleepTimer(endTime, minutes = 0, { restoreVolume = true } = {}) {
   resetSleepTimerState({ restoreVolume });
-
   const remainingMs = endTime - Date.now();
   if (remainingMs <= 0) return;
-
   sleepEndTime = endTime;
   saveSleepState(endTime, minutes);
   updateSleepUI(minutes);
   tickSleepDisplay();
-
   sleepIntervalId = setInterval(tickSleepDisplay, 1000);
   sleepTimerId = setTimeout(() => {
     fadeAndPause(Math.min(SLEEP_FADE_MS, Math.max(0, sleepEndTime - Date.now())));
   }, Math.max(0, remainingMs - SLEEP_FADE_MS));
 }
 
-// Sleep timer delegated click
 sleepSection?.addEventListener('click', e => {
   const btn = e.target.closest('.sleep-btn');
   if (!btn) return;
@@ -1126,7 +1434,7 @@ sleepSection?.addEventListener('click', e => {
   if (minutes) startSleepTimer(minutes);
 });
 
-// Keyboard
+// Keyboard shortcuts
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space')      { e.preventDefault(); playBtn.click(); }
@@ -1134,6 +1442,9 @@ document.addEventListener('keydown', e => {
   if (e.code === 'ArrowRight') forwardBtn.click();
   if (e.code === 'KeyN')       playNext();
   if (e.code === 'KeyP')       playPrev();
+  if (e.code === 'KeyB')       addBookmark();
+  if (e.code === 'KeyS')       cycleSpeed();
+  if (e.code === 'Escape')     closeAllSheets();
 });
 
 // ===== Init =====
@@ -1145,7 +1456,6 @@ async function init() {
   const meta = loadLibraryMeta();
   state.library = meta;
 
-  // Restore blob URLs from IndexedDB
   if (db && state.library.length > 0) {
     const storedIds = new Set(await dbGetAllIds());
     for (const item of state.library) {
@@ -1159,6 +1469,11 @@ async function init() {
             if (f) t.url = URL.createObjectURL(f);
           }
         }
+        const coverId = 'cover_' + item.id;
+        if (storedIds.has(coverId)) {
+          const coverFile = await dbGet(coverId);
+          if (coverFile) state.covers[item.id] = URL.createObjectURL(coverFile);
+        }
       }
     }
   }
@@ -1171,10 +1486,10 @@ async function init() {
   audio.volume = vol;
   volumeSlider.value = vol;
 
-  // Restore theme (before render so no flash)
+  // Restore theme
   applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 
-  // Restore sleep timer if still active
+  // Restore sleep timer
   const savedSleep = loadSleepState();
   if (savedSleep?.endTime > Date.now()) {
     scheduleSleepTimer(savedSleep.endTime, savedSleep.minutes, { restoreVolume: false });
@@ -1182,13 +1497,17 @@ async function init() {
     saveSleepState(0);
   }
 
-  // Auto-load last track + show continue banner if saved position > 5s
+  // Init bookmarks display
+  renderBookmarks();
+
+  // Auto-load last track
   const lastId = localStorage.getItem(CURRENT_KEY);
   if (lastId) {
     const ctx = findTrack(lastId);
     if (ctx?.track.url) {
       state.currentId = lastId;
       updatePlayerTitle(ctx.track, ctx.group);
+      applyCoverForTrack(ctx.track, ctx.group);
       const pos = loadProgress(lastId);
       if (pos > 5) showContinueBanner(ctx.track, ctx.group, pos);
     }

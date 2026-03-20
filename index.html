@@ -16,11 +16,20 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- SW update banner (floats over everything) -->
+  <div class="update-banner" id="updateBanner" hidden>
+    <span>New version available</span>
+    <button class="update-now-btn" id="updateBtn">Update now</button>
+    <button class="update-later-btn" id="updateDismiss">Later</button>
+  </div>
+
   <div class="app">
+    <!-- Blurred cover background -->
+    <div class="cover-bg" id="coverBg"></div>
     <!-- Scanlines overlay -->
     <div class="scanlines" aria-hidden="true"></div>
 
-    <!-- Header -->
+    <!-- ===== Header ===== -->
     <header class="header">
       <button class="icon-btn" id="menuBtn" aria-label="Library">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -32,97 +41,92 @@
 
       <span class="header-title">AI&nbsp;AUDIO&nbsp;READER</span>
 
-      <div class="header-actions">
-        <button class="icon-btn" id="themeBtn" aria-label="Switch to light theme" title="Switch to light theme">
-          <!-- filled by JS; default sun for dark mode -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-            <circle cx="12" cy="12" r="5"/>
-            <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-          </svg>
-        </button>
-        <button class="icon-btn" id="folderBtn" aria-label="Upload folder" title="Add folder / audiobook">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
-        <button class="icon-btn" id="uploadBtn" aria-label="Upload files" title="Add audio files">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-        </button>
-      </div>
+      <button class="icon-btn" id="themeBtn" aria-label="Switch theme" title="Switch theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
 
+      <button class="icon-btn help-btn" id="helpBtn" aria-label="Установить приложение" title="Как установить?">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </button>
+
+      <!-- Hidden file inputs -->
       <input type="file" id="fileInput"   accept="audio/*" multiple hidden />
       <input type="file" id="folderInput" webkitdirectory multiple hidden />
     </header>
 
-    <!-- Main Player -->
-    <main class="player-view" id="playerView">
+    <!-- ===== Main Player (single screen, no scroll) ===== -->
+    <main class="player-view">
 
-      <!-- Continue Banner -->
+      <!-- Continue Banner (floating, not in flow) -->
       <div class="continue-banner" id="continueBanner" hidden>
         <div class="continue-info">
           <div class="continue-book" id="continueBookName">Track</div>
           <div class="continue-pos"  id="continuePos">from 0:00</div>
         </div>
         <button class="continue-btn" id="continueBtn">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="5,3 19,12 5,21"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><polygon points="5,3 19,12 5,21"/></svg>
           RESUME
         </button>
         <button class="icon-btn continue-close" id="continueDismiss" aria-label="Dismiss">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
         </button>
       </div>
 
-      <!-- Cover + Visualizer -->
-      <div class="cover-container">
-        <div class="cover-art" id="coverArt">
-          <!-- Idle vinyl graphic -->
-          <svg class="cover-placeholder" id="coverPlaceholder" viewBox="0 0 200 200" fill="none">
-            <circle cx="100" cy="100" r="90" stroke="#00f5d4" stroke-width="1" opacity="0.15"/>
-            <circle cx="100" cy="100" r="70" stroke="#00f5d4" stroke-width="1" opacity="0.1"/>
-            <circle cx="100" cy="100" r="50" stroke="#7b2fff" stroke-width="1.5" opacity="0.3"/>
-            <circle cx="100" cy="100" r="30" stroke="#ff2d78" stroke-width="2" opacity="0.4"/>
-            <circle cx="100" cy="100" r="12" fill="#7b2fff" opacity="0.6"/>
-            <circle cx="100" cy="100" r="5"  fill="#00f5d4"/>
-            <!-- tick marks -->
-            <line x1="100" y1="10" x2="100" y2="20" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
-            <line x1="190" y1="100" x2="180" y2="100" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
-            <line x1="100" y1="190" x2="100" y2="180" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
-            <line x1="10" y1="100" x2="20" y2="100" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
-          </svg>
-          <!-- Spectrum visualizer canvas -->
-          <canvas id="vizCanvas" class="viz-canvas"></canvas>
+      <!-- Cover Section (flexible, fills remaining height) -->
+      <div class="cover-section">
+        <div class="cover-container">
+          <div class="cover-art" id="coverArt">
+            <!-- Visualizer behind cover image -->
+            <canvas id="vizCanvas" class="viz-canvas"></canvas>
+            <!-- Vinyl placeholder -->
+            <svg class="cover-placeholder" id="coverPlaceholder" viewBox="0 0 200 200" fill="none">
+              <circle cx="100" cy="100" r="90" stroke="#00f5d4" stroke-width="1" opacity="0.15"/>
+              <circle cx="100" cy="100" r="70" stroke="#00f5d4" stroke-width="1" opacity="0.1"/>
+              <circle cx="100" cy="100" r="50" stroke="#7b2fff" stroke-width="1.5" opacity="0.3"/>
+              <circle cx="100" cy="100" r="30" stroke="#ff2d78" stroke-width="2" opacity="0.4"/>
+              <circle cx="100" cy="100" r="12" fill="#7b2fff" opacity="0.6"/>
+              <circle cx="100" cy="100" r="5"  fill="#00f5d4"/>
+              <line x1="100" y1="10" x2="100" y2="20" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
+              <line x1="190" y1="100" x2="180" y2="100" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
+              <line x1="100" y1="190" x2="100" y2="180" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
+              <line x1="10" y1="100" x2="20" y2="100" stroke="#00f5d4" stroke-width="1" opacity="0.4"/>
+            </svg>
+            <!-- Cover image on top -->
+            <img id="coverArtImg" class="cover-art-img" src="" alt="Cover art" />
+          </div>
+          <div class="now-playing-badge" id="nowPlayingBadge">● PLAYING</div>
         </div>
-        <div class="now-playing-badge" id="nowPlayingBadge">● PLAYING</div>
       </div>
 
-      <!-- Track Info -->
+      <!-- Track Info (compact, single lines) -->
       <div class="track-info">
         <h2 class="track-title" id="trackTitle">SELECT A TRACK</h2>
-        <p class="track-author" id="trackAuthor">Upload audio files or a folder</p>
+        <p class="track-author" id="trackAuthor">Open library or add files via settings</p>
       </div>
 
-      <!-- Progress Bar -->
+      <!-- Progress Bar (car-friendly range input) -->
       <div class="progress-container">
-        <div class="progress-bar" id="progressBar">
-          <div class="progress-fill"  id="progressFill"></div>
-          <div class="progress-thumb" id="progressThumb"></div>
-        </div>
+        <input type="range" id="progressBar" min="0" max="100" step="0.1" value="0"
+               class="progress-range" aria-label="Playback progress" />
         <div class="time-labels">
           <span id="currentTime">0:00</span>
           <span id="duration">0:00</span>
         </div>
       </div>
 
-      <!-- Controls -->
+      <!-- Playback Controls -->
       <div class="controls">
         <button class="icon-btn skip-btn" id="rewindBtn" aria-label="Rewind 15s">
           <svg viewBox="0 0 24 24" fill="currentColor">
@@ -146,91 +150,264 @@
         </button>
       </div>
 
-      <!-- Speed -->
-      <div class="speed-control">
-        <span class="speed-label">SPEED</span>
-        <div class="speed-buttons">
-          <button class="speed-btn" data-speed="0.75">0.75×</button>
-          <button class="speed-btn active" data-speed="1">1×</button>
-          <button class="speed-btn" data-speed="1.25">1.25×</button>
-          <button class="speed-btn" data-speed="1.5">1.5×</button>
-          <button class="speed-btn" data-speed="2">2×</button>
-        </div>
-      </div>
+      <!-- Bottom Toolbar (glassmorphism) -->
+      <div class="bottom-toolbar">
+        <button class="toolbar-btn" id="chaptersBtn" aria-label="Chapters">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <line x1="8" y1="6" x2="21" y2="6"/>
+            <line x1="8" y1="12" x2="21" y2="12"/>
+            <line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/>
+            <line x1="3" y1="12" x2="3.01" y2="12"/>
+            <line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+          <span>Chapters</span>
+        </button>
 
-      <!-- Volume -->
-      <div class="volume-control">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-        </svg>
-        <input type="range" id="volumeSlider" min="0" max="1" step="0.02" value="1" class="volume-slider" />
-        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-        </svg>
-      </div>
+        <button class="toolbar-btn toolbar-btn-accent" id="bookmarksSheetBtn" aria-label="Bookmarks">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+            <line x1="4" y1="22" x2="4" y2="15"/>
+          </svg>
+          <span>Marks</span>
+        </button>
 
-      <!-- Inline Playlist -->
-      <div class="playlist-section" id="playlistSection" hidden>
-        <div class="playlist-header">
-          <span class="playlist-label">PLAYLIST</span>
-          <span class="playlist-count" id="playlistCount"></span>
-        </div>
-        <div class="playlist-items" id="playlistItems"></div>
-      </div>
+        <button class="toolbar-btn speed-display" id="speedDisplay" aria-label="Playback speed">
+          <span class="speed-val">1×</span>
+          <span class="speed-txt">Speed</span>
+        </button>
 
-      <!-- Sleep Timer -->
-      <div class="sleep-section" id="sleepSection">
-        <div class="sleep-header">
-          <span class="sleep-label">SLEEP TIMER</span>
-          <div class="sleep-countdown" id="sleepCountdown" hidden>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
-              <circle cx="12" cy="12" r="10"/>
-              <polyline points="12 6 12 12 16 14"/>
-            </svg>
-            <span id="sleepTime">0:00</span>
-          </div>
-        </div>
-        <div class="sleep-buttons">
-          <button class="sleep-btn" data-minutes="15">15 min</button>
-          <button class="sleep-btn" data-minutes="30">30 min</button>
-          <button class="sleep-btn" data-minutes="60">60 min</button>
-          <button class="sleep-btn sleep-cancel" id="sleepCancel" hidden>✕ Cancel</button>
-        </div>
+        <button class="toolbar-btn" id="settingsBtn" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Settings</span>
+        </button>
       </div>
 
     </main>
+
+    <!-- ===== CHAPTERS SHEET ===== -->
+    <div class="sheet-overlay" id="chaptersOverlay">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <span class="sheet-title">CHAPTERS</span>
+          <div class="sheet-header-right">
+            <span class="playlist-count" id="playlistCount"></span>
+            <button class="icon-btn sheet-close" id="chaptersClose" aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="sheet-body">
+          <div class="playlist-items" id="playlistItems"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== BOOKMARKS SHEET ===== -->
+    <div class="sheet-overlay" id="bookmarksOverlay">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <span class="sheet-title">BOOKMARKS</span>
+          <div class="sheet-header-right">
+            <button class="icon-btn add-bookmark-btn" id="addBookmarkBtn"
+                    title="Add bookmark" aria-label="Add bookmark">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+                <line x1="4" y1="22" x2="4" y2="15"/>
+              </svg>
+            </button>
+            <button class="icon-btn sheet-close" id="bookmarksClose" aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="sheet-body">
+          <button class="return-btn" id="returnBtn" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="9 14 4 9 9 4"/>
+              <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+            </svg>
+            Return to listening point
+          </button>
+          <div class="bookmarks-list" id="bookmarksList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS SHEET ===== -->
+    <div class="sheet-overlay" id="settingsOverlay">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <span class="sheet-title">SETTINGS</span>
+          <button class="icon-btn sheet-close" id="settingsClose" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+
+          <!-- Volume -->
+          <div class="settings-group">
+            <div class="settings-label">VOLUME</div>
+            <div class="settings-row">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex-shrink:0;color:var(--text2)">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+              </svg>
+              <input type="range" id="volumeSlider" min="0" max="1" step="0.02" value="1" class="volume-slider" />
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex-shrink:0;color:var(--text2)">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- Sleep Timer -->
+          <div class="settings-group" id="sleepSection">
+            <div class="settings-label-row">
+              <div class="settings-label">SLEEP TIMER</div>
+              <div class="sleep-countdown" id="sleepCountdown" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span id="sleepTime">0:00</span>
+              </div>
+            </div>
+            <div class="sleep-buttons">
+              <button class="sleep-btn" data-minutes="15">15 min</button>
+              <button class="sleep-btn" data-minutes="30">30 min</button>
+              <button class="sleep-btn" data-minutes="60">60 min</button>
+              <button class="sleep-btn sleep-cancel" id="sleepCancel" hidden>✕ Cancel</button>
+            </div>
+          </div>
+
+          <!-- Add files -->
+          <div class="settings-group">
+            <div class="settings-label">ADD CONTENT</div>
+            <div class="settings-actions">
+              <button class="settings-action-btn" id="folderBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                Add Folder
+              </button>
+              <button class="settings-action-btn" id="uploadBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Add Files
+              </button>
+            </div>
+          </div>
+
+          <!-- Danger zone -->
+          <div class="settings-group settings-danger">
+            <div class="settings-label">MANAGE DATA</div>
+            <div class="settings-actions">
+              <button class="settings-action-btn danger-action" id="clearLibraryBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                </svg>
+                Clear Library
+              </button>
+              <button class="settings-action-btn danger-action danger-strong" id="resetAllBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                </svg>
+                Reset All Data
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
 
     <!-- Library Sidebar -->
     <aside class="library-panel" id="libraryPanel">
       <div class="library-header">
         <h3>LIBRARY</h3>
-        <div class="library-header-actions">
-          <button class="icon-btn danger-btn" id="clearLibraryBtn" title="Clear all">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-            </svg>
-          </button>
-          <button class="icon-btn" id="closeLibrary" aria-label="Close">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
+        <button class="icon-btn" id="closeLibrary" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
       <div class="library-list" id="libraryList"></div>
     </aside>
 
     <div class="overlay" id="overlay"></div>
+
+    <!-- ===== PWA GUIDE SHEET ===== -->
+    <div class="sheet-overlay" id="guideOverlay">
+      <div class="sheet sheet-guide">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <span class="sheet-title">УСТАНОВКА</span>
+          <button class="icon-btn sheet-close" id="guideClose" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sheet-body" id="guideContent">
+          <!-- filled by JS -->
+        </div>
+      </div>
+    </div>
   </div>
 
   <audio id="audioPlayer" preload="metadata" playsinline></audio>
   <script src="script.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        // Check if there's already a waiting worker (page reload after update)
+        if (reg.waiting) showUpdateBanner();
+
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              showUpdateBanner();
+            }
+          });
+        });
+      }).catch(() => {});
+
+      // When new SW takes control → reload to use updated assets
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        window.location.reload();
+      });
     }
+
+    function showUpdateBanner() {
+      const banner = document.getElementById('updateBanner');
+      if (banner) banner.hidden = false;
+    }
+
+    document.getElementById('updateBtn')?.addEventListener('click', () => {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
+      });
+    });
+
+    document.getElementById('updateDismiss')?.addEventListener('click', () => {
+      document.getElementById('updateBanner').hidden = true;
+    });
   </script>
 </body>
 </html>
