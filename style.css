@@ -830,6 +830,61 @@ body {
 .danger-action:hover { border-color: var(--neon-b) !important; color: var(--neon-b) !important; background: rgba(255,45,120,0.07) !important; }
 .danger-strong { border-color: rgba(255,45,120,0.25); color: rgba(255,45,120,0.7); }
 
+/* Theme Switcher (segmented control) */
+.theme-switcher {
+  width: 100%;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(0,245,212,0.14);
+  border-radius: 10px;
+  padding: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--t);
+}
+.theme-switcher:hover { border-color: rgba(0,245,212,0.28); }
+
+.theme-switcher-track {
+  display: flex;
+  gap: 3px;
+}
+
+.theme-switcher-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 8px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 12px;
+  color: var(--text2);
+  transition: all 0.22s;
+  pointer-events: none;
+}
+
+/* Active segment — driven by data-theme on <html>, no JS needed */
+[data-theme="dark"]  .theme-dark-opt {
+  background: rgba(0,245,212,0.1);
+  border-color: rgba(0,245,212,0.3);
+  color: var(--neon-a);
+  text-shadow: 0 0 8px rgba(0,245,212,0.4);
+}
+[data-theme="light"] .theme-light-opt {
+  background: rgba(124,58,237,0.09);
+  border-color: rgba(124,58,237,0.3);
+  color: #7c3aed;
+}
+
+/* Light theme overrides for the switcher */
+html[data-theme="light"] .theme-switcher {
+  background: rgba(0,0,0,0.03);
+  border-color: rgba(124,58,237,0.14);
+}
+html[data-theme="light"] .theme-switcher:hover { border-color: rgba(124,58,237,0.3); }
+html[data-theme="light"] .theme-switcher-option { color: #9ca3af; }
+
 /* Volume in settings */
 .volume-slider {
   flex: 1;
@@ -937,6 +992,19 @@ body {
   color: var(--neon-a);
   text-shadow: var(--glow-a);
 }
+
+/* Visible close button in library header */
+#closeLibrary {
+  width: 44px;
+  height: 44px;
+  color: var(--text);
+  border: 1px solid rgba(0,245,212,0.2);
+  border-radius: 10px;
+  background: rgba(0,245,212,0.06);
+}
+#closeLibrary:hover  { color: var(--neon-b); border-color: rgba(255,45,120,0.4); background: rgba(255,45,120,0.08); }
+#closeLibrary:active { transform: scale(0.9); }
+#closeLibrary svg    { width: 18px; height: 18px; }
 
 .library-list {
   flex: 1;
@@ -1077,7 +1145,7 @@ body {
   pointer-events: none;
   transition: opacity 0.3s;
 }
-.overlay.visible { opacity: 1; pointer-events: all; }
+.overlay.visible { opacity: 1; pointer-events: all; cursor: pointer; }
 
 /* ===== Toast ===== */
 .toast {

@@ -20,7 +20,7 @@ const SLEEP_KEY    = 'air_sleep_end';
 const BOOKMARKS_KEY= 'air_bookmarks';
 const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
 const COVER_NAMES  = /^(cover|folder|front|album|albumart|artwork)\.(jpg|jpeg|png|webp)$/i;
-const SPEED_CYCLE  = [0.75, 1, 1.25, 1.5, 2];
+const SPEED_CYCLE  = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
 
 // ===== IndexedDB =====
 const IDB_NAME  = 'AudioReaderDB';
@@ -370,17 +370,22 @@ function applySpeed(v) {
   try { localStorage.setItem(SPEED_KEY, v); } catch {}
   if (speedDisplay) {
     const valEl = speedDisplay.querySelector('.speed-val');
-    if (valEl) valEl.textContent = v + '×';
+    if (valEl) valEl.textContent = v.toFixed(1) + '×';
   }
 }
 
-function loadSpeed() { return parseFloat(localStorage.getItem(SPEED_KEY) || '1'); }
+function loadSpeed() {
+  const saved = parseFloat(localStorage.getItem(SPEED_KEY) || '1');
+  // Snap to nearest valid step; fall back to 1.0 if outside range
+  const snapped = Math.round(Math.max(1.0, Math.min(2.0, saved)) * 10) / 10;
+  return SPEED_CYCLE.includes(snapped) ? snapped : 1.0;
+}
 
 function cycleSpeed() {
   const idx = SPEED_CYCLE.indexOf(state.speed);
   const next = SPEED_CYCLE[(idx + 1) % SPEED_CYCLE.length];
   applySpeed(next);
-  showToast(`Speed: ${next}×`);
+  showToast(`Speed: ${next.toFixed(1)}×`);
 }
 
 speedDisplay?.addEventListener('click', cycleSpeed);
@@ -482,20 +487,8 @@ function saveVolume(v) { try { localStorage.setItem(VOLUME_KEY, v); } catch {} }
 function loadVolume()  { return Math.max(0, Math.min(1, parseFloat(localStorage.getItem(VOLUME_KEY) ?? '1'))); }
 
 // ===== Theme =====
-const SVG_SUN  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
-const SVG_MOON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
-
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  const btn = document.getElementById('themeBtn');
-  if (!btn) return;
-  if (theme === 'dark') {
-    btn.innerHTML = SVG_SUN; btn.title = 'Switch to light theme';
-    btn.setAttribute('aria-label', 'Switch to light theme');
-  } else {
-    btn.innerHTML = SVG_MOON; btn.title = 'Switch to dark theme';
-    btn.setAttribute('aria-label', 'Switch to dark theme');
-  }
   try { localStorage.setItem(THEME_KEY, theme); } catch {}
 }
 
@@ -1067,7 +1060,7 @@ volumeSlider.addEventListener('input', () => {
   saveVolume(v);
 });
 
-document.getElementById('themeBtn')?.addEventListener('click', () => {
+document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
   const cur = document.documentElement.getAttribute('data-theme') || 'dark';
   applyTheme(cur === 'dark' ? 'light' : 'dark');
 });
@@ -1083,8 +1076,9 @@ document.addEventListener('drop',     e => { e.preventDefault(); handleFiles(e.d
 
 // Library sidebar
 menuBtn.addEventListener('click',      openLibrary);
-closeLibrary.addEventListener('click', closeLibraryPanel);
-overlay.addEventListener('click',      closeLibraryPanel);
+closeLibrary.addEventListener('click',    closeLibraryPanel);
+overlay.addEventListener('click',        closeLibraryPanel);
+overlay.addEventListener('touchend', e => { e.preventDefault(); closeLibraryPanel(); });
 clearLibraryBtn?.addEventListener('click', clearLibrary);
 resetAllBtn?.addEventListener('click',     resetAll);
 
@@ -1444,7 +1438,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyP')       playPrev();
   if (e.code === 'KeyB')       addBookmark();
   if (e.code === 'KeyS')       cycleSpeed();
-  if (e.code === 'Escape')     closeAllSheets();
+  if (e.code === 'Escape')     { closeAllSheets(); closeLibraryPanel(); }
 });
 
 // ===== Init =====
