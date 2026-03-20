@@ -18,9 +18,16 @@
 <body>
   <!-- SW update banner (floats over everything) -->
   <div class="update-banner" id="updateBanner" hidden>
-    <span>New version available</span>
-    <button class="update-now-btn" id="updateBtn">Update now</button>
-    <button class="update-later-btn" id="updateDismiss">Later</button>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0;color:var(--neon-a)">
+      <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+    </svg>
+    <span>Доступна новая версия</span>
+    <button class="update-now-btn" id="updateBtn">Обновить</button>
+    <button class="update-close-btn" id="updateDismiss" aria-label="Закрыть">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
   </div>
 
   <div class="app">
@@ -388,38 +395,32 @@
   <audio id="audioPlayer" preload="metadata" playsinline></audio>
   <script src="script.js"></script>
   <script>
+    // Track whether a SW was already controlling this page before registration
+    const _hadController = !!(navigator && navigator.serviceWorker && navigator.serviceWorker.controller);
+
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').then(reg => {
-        // Check if there's already a waiting worker (page reload after update)
-        if (reg.waiting) showUpdateBanner();
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
 
-        reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              showUpdateBanner();
-            }
-          });
-        });
-      }).catch(() => {});
-
-      // When new SW takes control → reload to use updated assets
+      // New SW took control (skipWaiting fired in install):
+      // show banner only if there WAS a previous controller
+      // (first-ever install has no previous controller — no banner needed)
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload();
+        if (_hadController) _showUpdateBanner();
       });
     }
 
-    function showUpdateBanner() {
-      const banner = document.getElementById('updateBanner');
-      if (banner) banner.hidden = false;
+    function _showUpdateBanner() {
+      const b = document.getElementById('updateBanner');
+      if (b) b.hidden = false;
     }
 
+    // "Обновить": hide banner immediately, then reload
     document.getElementById('updateBtn')?.addEventListener('click', () => {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
-      });
+      document.getElementById('updateBanner').hidden = true;
+      window.location.reload();
     });
 
+    // "×": just dismiss — user can keep listening; new version loads on next visit
     document.getElementById('updateDismiss')?.addEventListener('click', () => {
       document.getElementById('updateBanner').hidden = true;
     });

@@ -1,21 +1,20 @@
 /* =====================================================
-   AI Audio Reader — Service Worker v3
-   Network-first for app shell, with update prompt
+   AI Audio Reader — Service Worker v4
+   skipWaiting on install → page controls reload timing
    ===================================================== */
 
-const CACHE_VERSION = 'air-v3';
+const CACHE_VERSION = 'air-v4';
 const ASSETS = ['/', '/index.html', '/style.css', '/script.js', '/manifest.json', '/icons/icon.svg'];
 
-// Install: pre-cache assets, do NOT skipWaiting automatically
-// (we want to prompt the user first)
+// Install: pre-cache assets + activate immediately (no waiting)
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE_VERSION).then(cache => cache.addAll(ASSETS))
   );
-  // Don't call skipWaiting() here — wait for user confirmation
+  self.skipWaiting(); // Take control instantly
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches + claim all clients
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
@@ -24,14 +23,8 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Message: allow main page to trigger skipWaiting (on user consent)
-self.addEventListener('message', e => {
-  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
-});
-
 // Fetch: network-first strategy for app shell, fallback to cache
 self.addEventListener('fetch', e => {
-  // Skip non-GET, blob URLs, chrome-extension, etc.
   if (e.request.method !== 'GET') return;
   if (!e.request.url.startsWith(self.location.origin)) return;
   if (e.request.url.startsWith('blob:')) return;
@@ -39,13 +32,12 @@ self.addEventListener('fetch', e => {
   e.respondWith(
     fetch(e.request)
       .then(networkRes => {
-        // Update cache with fresh response
         if (networkRes.ok) {
           const clone = networkRes.clone();
           caches.open(CACHE_VERSION).then(cache => cache.put(e.request, clone));
         }
         return networkRes;
       })
-      .catch(() => caches.match(e.request)) // offline fallback
+      .catch(() => caches.match(e.request))
   );
 });

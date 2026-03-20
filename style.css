@@ -85,15 +85,26 @@ body {
   letter-spacing: 0.5px;
 }
 
-.update-later-btn {
-  background: none;
-  border: none;
+.update-now-btn:hover { opacity: 0.88; }
+.update-now-btn:active { transform: scale(0.95); }
+
+.update-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
   color: var(--text2);
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
   cursor: pointer;
-  padding: 4px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
 }
+.update-close-btn:hover  { background: rgba(255,45,120,0.15); border-color: rgba(255,45,120,0.35); color: var(--neon-b); }
+.update-close-btn:active { transform: scale(0.9); }
 
 /* ===== Cover Background (blurred) ===== */
 .cover-bg {
@@ -1500,7 +1511,8 @@ html[data-theme="light"] .continue-btn:hover { background: rgba(124,58,237,0.07)
 
 html[data-theme="light"] .update-banner { background: rgba(255,255,255,0.97); color: #7c3aed; border-color: rgba(124,58,237,0.25); box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
 html[data-theme="light"] .update-now-btn { background: #7c3aed; }
-html[data-theme="light"] .update-later-btn { color: #6b7280; }
+html[data-theme="light"] .update-close-btn { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.1); color: #9ca3af; }
+html[data-theme="light"] .update-close-btn:hover { background: rgba(219,39,119,0.06); border-color: rgba(219,39,119,0.25); color: #db2777; }
 
 html[data-theme="light"] .empty-library { color: #9ca3af; }
 html[data-theme="light"] .empty-library svg { color: #c4b5fd; }
