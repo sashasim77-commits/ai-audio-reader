@@ -414,16 +414,7 @@
       if (b) b.hidden = false;
     }
 
-    // "Обновить": hide banner immediately, then reload
-    document.getElementById('updateBtn')?.addEventListener('click', () => {
-      document.getElementById('updateBanner').hidden = true;
-      window.location.reload();
-    });
-
-    // "×": just dismiss — user can keep listening; new version loads on next visit
-    document.getElementById('updateDismiss')?.addEventListener('click', () => {
-      document.getElementById('updateBanner').hidden = true;
-    });
+    // Button listeners are handled in script.js
   </script>
 </body>
 </html>

@@ -1511,3 +1511,33 @@ async function init() {
 }
 
 init();
+
+// ===== SW Update Banner =====
+document.getElementById('updateBtn')?.addEventListener('click', async () => {
+  console.log('[Update] Update clicked');
+
+  // Hide banner immediately so user sees action was registered
+  const banner = document.getElementById('updateBanner');
+  if (banner) banner.hidden = true;
+
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg?.waiting) {
+      // New SW is waiting → tell it to take over now
+      console.log('[Update] Sending SKIP_WAITING to waiting worker');
+      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    } else {
+      console.log('[Update] No waiting worker (already active) — reloading directly');
+    }
+  } catch (err) {
+    console.warn('[Update] getRegistration error:', err);
+  }
+
+  console.log('[Update] Reloading...');
+  window.location.reload(true);
+});
+
+document.getElementById('updateDismiss')?.addEventListener('click', () => {
+  const banner = document.getElementById('updateBanner');
+  if (banner) banner.hidden = true;
+});
