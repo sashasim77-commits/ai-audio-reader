@@ -1299,6 +1299,7 @@ function blurControlButton(event) {
 [rewindBtn, forwardBtn, playBtn].forEach(btn => {
   btn?.addEventListener('pointerup', blurControlButton);
   btn?.addEventListener('pointercancel', blurControlButton);
+  btn?.addEventListener('click', blurControlButton);
 });
 
 progressRange.addEventListener('input', () => {

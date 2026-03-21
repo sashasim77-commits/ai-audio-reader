@@ -1561,9 +1561,22 @@ html[data-theme="light"] .empty-library { color: #9ca3af; }
 html[data-theme="light"] .empty-library svg { color: #c4b5fd; }
 
 @media (hover: none) {
+  .skip-btn:hover {
+    color: var(--text2);
+    background: rgba(8,8,32,0.5);
+    border-color: rgba(0,245,212,0.18);
+    box-shadow: none;
+  }
+
+  html[data-theme="light"] .skip-btn:hover {
+    color: #6b7280;
+    background: #fff;
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+
   .icon-btn:hover,
   .play-btn:hover,
-  .skip-btn:hover,
   .toolbar-btn:hover,
   .toolbar-btn-accent:hover,
   .playlist-item:hover,
@@ -1585,7 +1598,6 @@ html[data-theme="light"] .empty-library svg { color: #c4b5fd; }
 
   html[data-theme="light"] .icon-btn:hover,
   html[data-theme="light"] .play-btn:hover,
-  html[data-theme="light"] .skip-btn:hover,
   html[data-theme="light"] .toolbar-btn:hover,
   html[data-theme="light"] .toolbar-btn-accent:hover,
   html[data-theme="light"] .playlist-item:hover,
