@@ -9,6 +9,7 @@ const state = {
   covers:          {},   // item/group id -> cover blob URL
   coverTypes:      {},   // item/group id -> mime type
   coverMediaSrcs:  {},   // item/group id -> data URL for MediaMetadata/Bluetooth
+  coverArtworks:   {},   // item/group id -> MediaMetadata artwork variants
   preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
 };
 
@@ -479,6 +480,49 @@ function fileToDataUrl(file) {
   });
 }
 
+function loadImageFromObjectUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function buildArtworkVariants(file) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await loadImageFromObjectUrl(objectUrl);
+    const sizes = [96, 128, 192, 256, 384, 512];
+    const variants = [];
+
+    for (const size of sizes) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+
+      const side = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+      const sx = Math.max(0, ((img.naturalWidth || img.width) - side) / 2);
+      const sy = Math.max(0, ((img.naturalHeight || img.height) - side) / 2);
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      variants.push({
+        src: canvas.toDataURL('image/jpeg', 0.92),
+        sizes: `${size}x${size}`,
+        type: 'image/jpeg',
+      });
+    }
+
+    return variants;
+  } catch {
+    const fallback = await fileToDataUrl(file);
+    return [{ src: fallback, sizes: '512x512', type: file.type || inferImageType(file.name) }];
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function ensureCoverForItem(key, file) {
   if (!key || !file || state.covers[key]) return false;
   const artwork = await extractEmbeddedArtwork(file);
@@ -783,6 +827,11 @@ function getCoverMediaSrc(track, group) {
   return key ? (state.coverMediaSrcs[key] || null) : null;
 }
 
+function getCoverArtworks(track, group) {
+  const key = getCoverKey(track, group);
+  return key ? (state.coverArtworks[key] || null) : null;
+}
+
 async function setStoredCover(key, file) {
   if (!key || !file) return;
   if (state.covers[key]) URL.revokeObjectURL(state.covers[key]);
@@ -792,6 +841,11 @@ async function setStoredCover(key, file) {
     state.coverMediaSrcs[key] = await fileToDataUrl(file);
   } catch {
     delete state.coverMediaSrcs[key];
+  }
+  try {
+    state.coverArtworks[key] = await buildArtworkVariants(file);
+  } catch {
+    delete state.coverArtworks[key];
   }
 }
 
@@ -803,6 +857,7 @@ function clearStoredCover(key) {
   delete state.covers[key];
   delete state.coverTypes[key];
   delete state.coverMediaSrcs[key];
+  delete state.coverArtworks[key];
 }
 
 function setCoverImage(url) {
@@ -1156,13 +1211,17 @@ function syncPlaybackState() {
 
 function updateMediaSession(track, group) {
   if (!('mediaSession' in navigator) || !track) return;
+  const coverArtworks = getCoverArtworks(track, group);
   const coverUrl = getCoverMediaSrc(track, group) || getCoverUrl(track, group);
   const coverType = getCoverType(track, group) || 'image/jpeg';
+  navigator.mediaSession.metadata = null;
   navigator.mediaSession.metadata = new MediaMetadata({
     title: track.name,
     artist: getTrackArtist(track, group),
     album: group?.name || 'AI Audio Reader',
-    artwork: coverUrl
+    artwork: coverArtworks?.length
+      ? coverArtworks
+      : coverUrl
       ? [{ src: coverUrl, sizes: '512x512', type: coverType }]
       : [{ src: new URL('icons/icon.svg', window.location.href).href, sizes: 'any', type: 'image/svg+xml' }],
   });
@@ -1352,6 +1411,7 @@ async function clearLibrary() {
   state.covers = {};
   state.coverTypes = {};
   state.coverMediaSrcs = {};
+  state.coverArtworks = {};
 
   state.library = [];
   state.currentId = null;
@@ -1391,6 +1451,7 @@ async function resetAll() {
   state.covers           = {};
   state.coverTypes       = {};
   state.coverMediaSrcs   = {};
+  state.coverArtworks    = {};
   state.preBookmarkTime  = null;
 
   localStorage.clear();
@@ -1939,6 +2000,7 @@ async function init() {
             state.covers[item.id] = URL.createObjectURL(coverFile);
             state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
             try { state.coverMediaSrcs[item.id] = await fileToDataUrl(coverFile); } catch {}
+            try { state.coverArtworks[item.id] = await buildArtworkVariants(coverFile); } catch {}
           }
         }
       } else if (item.type === 'group') {
@@ -1962,6 +2024,7 @@ async function init() {
             state.covers[item.id] = URL.createObjectURL(coverFile);
             state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
             try { state.coverMediaSrcs[item.id] = await fileToDataUrl(coverFile); } catch {}
+            try { state.coverArtworks[item.id] = await buildArtworkVariants(coverFile); } catch {}
           }
         }
       }

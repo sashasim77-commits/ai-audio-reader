@@ -1427,8 +1427,24 @@ html[data-theme="light"] .cover-art.playing { animation: cover-pulse-light 3s ea
   50%      { box-shadow: 0 12px 48px rgba(124,58,237,0.2), 0 0 40px rgba(124,58,237,0.1); }
 }
 html[data-theme="light"] .cover-art.playing .viz-canvas { opacity: 0.25; }
-html[data-theme="light"] .track-title  { color: #111827; text-shadow: none; }
-html[data-theme="light"] .track-author { color: #374151; }
+html[data-theme="light"] .track-info {
+  background: rgba(255,255,255,0.74);
+  border: 1px solid rgba(124,58,237,0.12);
+  border-radius: 14px;
+  padding: 10px 14px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(15,23,42,0.08);
+}
+html[data-theme="light"] .track-title  {
+  color: #0f172a;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.7);
+  font-weight: 800;
+}
+html[data-theme="light"] .track-author {
+  color: #334155;
+  font-weight: 600;
+}
 
 html[data-theme="light"] .progress-range {
   background: linear-gradient(90deg, #7c3aed var(--p), #e5e7eb var(--p));
