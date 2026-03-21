@@ -349,6 +349,156 @@ function inferImageType(name = '') {
   return 'image/jpeg';
 }
 
+function readSynchsafeInt(bytes, offset) {
+  return ((bytes[offset] & 0x7f) << 21)
+       | ((bytes[offset + 1] & 0x7f) << 14)
+       | ((bytes[offset + 2] & 0x7f) << 7)
+       |  (bytes[offset + 3] & 0x7f);
+}
+
+function readUInt32(bytes, offset) {
+  return (bytes[offset] * 16777216)
+       + (bytes[offset + 1] << 16)
+       + (bytes[offset + 2] << 8)
+       +  bytes[offset + 3];
+}
+
+function findTerminator(bytes, start, encoding) {
+  if (encoding === 1 || encoding === 2) {
+    for (let i = start; i + 1 < bytes.length; i += 2) {
+      if (bytes[i] === 0 && bytes[i + 1] === 0) return i;
+    }
+    return bytes.length;
+  }
+  for (let i = start; i < bytes.length; i++) {
+    if (bytes[i] === 0) return i;
+  }
+  return bytes.length;
+}
+
+function parseId3Apic(fileBytes) {
+  if (fileBytes.length < 10) return null;
+  if (String.fromCharCode(fileBytes[0], fileBytes[1], fileBytes[2]) !== 'ID3') return null;
+
+  const version = fileBytes[3];
+  const tagSize = readSynchsafeInt(fileBytes, 6);
+  let offset = 10;
+  const limit = Math.min(fileBytes.length, 10 + tagSize);
+
+  while (offset + 10 <= limit) {
+    const frameId = String.fromCharCode(
+      fileBytes[offset],
+      fileBytes[offset + 1],
+      fileBytes[offset + 2],
+      fileBytes[offset + 3]
+    );
+    if (!frameId.trim()) break;
+
+    const frameSize = version === 4
+      ? readSynchsafeInt(fileBytes, offset + 4)
+      : readUInt32(fileBytes, offset + 4);
+    if (!frameSize || offset + 10 + frameSize > limit) break;
+
+    if (frameId === 'APIC') {
+      const frame = fileBytes.slice(offset + 10, offset + 10 + frameSize);
+      const encoding = frame[0];
+      const mimeEnd = findTerminator(frame, 1, 0);
+      const mimeType = new TextDecoder('latin1').decode(frame.slice(1, mimeEnd)) || 'image/jpeg';
+      let cursor = mimeEnd + 1;
+      cursor += 1; // picture type
+      const descEnd = findTerminator(frame, cursor, encoding);
+      cursor = descEnd + ((encoding === 1 || encoding === 2) ? 2 : 1);
+      if (cursor >= frame.length) return null;
+      return { bytes: frame.slice(cursor), type: mimeType };
+    }
+
+    offset += 10 + frameSize;
+  }
+
+  return null;
+}
+
+function readMp4AtomHeader(bytes, offset) {
+  if (offset + 8 > bytes.length) return null;
+  let size = readUInt32(bytes, offset);
+  const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+  let headerSize = 8;
+
+  if (size === 1) {
+    if (offset + 16 > bytes.length) return null;
+    const high = readUInt32(bytes, offset + 8);
+    const low = readUInt32(bytes, offset + 12);
+    size = high * 4294967296 + low;
+    headerSize = 16;
+  } else if (size === 0) {
+    size = bytes.length - offset;
+  }
+
+  if (!size || offset + size > bytes.length) return null;
+  return { size, type, headerSize };
+}
+
+function parseMp4Covr(bytes, start = 0, end = bytes.length) {
+  let offset = start;
+  while (offset + 8 <= end) {
+    const atom = readMp4AtomHeader(bytes, offset);
+    if (!atom || atom.size < atom.headerSize) break;
+    const dataStart = offset + atom.headerSize;
+    const dataEnd = offset + atom.size;
+
+    if (atom.type === 'covr') {
+      let inner = dataStart;
+      while (inner + 8 <= dataEnd) {
+        const child = readMp4AtomHeader(bytes, inner);
+        if (!child || child.size < child.headerSize) break;
+        if (child.type === 'data') {
+          const payloadStart = inner + child.headerSize + 8;
+          const typeCode = readUInt32(bytes, inner + child.headerSize);
+          const mimeType = typeCode === 14 ? 'image/png' : 'image/jpeg';
+          if (payloadStart < inner + child.size) {
+            return { bytes: bytes.slice(payloadStart, inner + child.size), type: mimeType };
+          }
+        }
+        inner += child.size;
+      }
+    }
+
+    if (['moov', 'udta', 'meta', 'ilst'].includes(atom.type)) {
+      const nestedStart = atom.type === 'meta' ? dataStart + 4 : dataStart;
+      const found = parseMp4Covr(bytes, nestedStart, dataEnd);
+      if (found) return found;
+    }
+
+    offset += atom.size;
+  }
+
+  return null;
+}
+
+async function extractEmbeddedArtwork(file) {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith('.mp3')) return parseId3Apic(bytes);
+    if (/\.(m4a|m4b|mp4|aac)$/i.test(lowerName)) return parseMp4Covr(bytes);
+  } catch (e) {
+    console.warn('Artwork extraction failed:', e);
+  }
+  return null;
+}
+
+async function ensureCoverForItem(key, file) {
+  if (!key || !file || state.covers[key]) return false;
+  const artwork = await extractEmbeddedArtwork(file);
+  if (!artwork?.bytes?.length) return false;
+
+  const ext = artwork.type === 'image/png' ? 'png' : artwork.type === 'image/webp' ? 'webp' : 'jpg';
+  const coverFile = new File([artwork.bytes], `cover.${ext}`, { type: artwork.type });
+  setStoredCover(key, coverFile);
+  await dbPut('cover_' + key, coverFile);
+  return true;
+}
+
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
 function cleanFileName(f) {
@@ -1087,6 +1237,17 @@ async function handleFiles(files) {
       }
     }
 
+    if (!state.covers[group.id] && flist[0]) {
+      const coverAdded = await ensureCoverForItem(group.id, flist[0]);
+      if (coverAdded && state.currentId) {
+        const ctx = findTrack(state.currentId);
+        if (ctx?.group?.id === group.id) {
+          applyCoverForTrack(ctx.track, ctx.group);
+          updateMediaSession(ctx.track, ctx.group);
+        }
+      }
+    }
+
     for (const file of flist) {
       const name = cleanFileName(file);
       const existing = group.tracks.find(t => t.name === name && t.size === file.size);
@@ -1127,6 +1288,8 @@ async function handleFiles(files) {
           applyCoverForTrack(existing, null);
           updateMediaSession(existing, null);
         }
+      } else {
+        await ensureCoverForItem(existing.id, file);
       }
       continue;
     }
@@ -1142,6 +1305,8 @@ async function handleFiles(files) {
         applyCoverForTrack(book, null);
         updateMediaSession(book, null);
       }
+    } else {
+      await ensureCoverForItem(id, file);
     }
     added++;
     const tmp = new Audio();
@@ -1756,7 +1921,12 @@ async function init() {
     for (const item of state.library) {
       if (item.type === 'single' && storedIds.has(item.id)) {
         const f = await dbGet(item.id);
-        if (f) item.url = URL.createObjectURL(f);
+        if (f) {
+          item.url = URL.createObjectURL(f);
+          if (!storedIds.has('cover_' + item.id)) {
+            await ensureCoverForItem(item.id, f);
+          }
+        }
         const coverId = 'cover_' + item.id;
         if (storedIds.has(coverId)) {
           const coverFile = await dbGet(coverId);
@@ -1770,6 +1940,13 @@ async function init() {
           if (storedIds.has(t.id)) {
             const f = await dbGet(t.id);
             if (f) t.url = URL.createObjectURL(f);
+          }
+        }
+        if (!storedIds.has('cover_' + item.id)) {
+          const firstTrackWithFile = item.tracks.find(t => t.url && storedIds.has(t.id));
+          if (firstTrackWithFile) {
+            const firstFile = await dbGet(firstTrackWithFile.id);
+            if (firstFile) await ensureCoverForItem(item.id, firstFile);
           }
         }
         const coverId = 'cover_' + item.id;
