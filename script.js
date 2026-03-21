@@ -6,7 +6,8 @@ const state = {
   currentId:       null,
   isPlaying:       false,
   speed:           1,
-  covers:          {},   // groupId -> cover blob URL
+  covers:          {},   // item/group id -> cover blob URL
+  coverTypes:      {},   // item/group id -> mime type
   preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
 };
 
@@ -340,6 +341,14 @@ function formatSize(b) {
   return b < 1048576 ? (b/1024).toFixed(0)+' KB' : (b/1048576).toFixed(1)+' MB';
 }
 
+function inferImageType(name = '') {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.svg')) return 'image/svg+xml';
+  return 'image/jpeg';
+}
+
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
 function cleanFileName(f) {
@@ -613,6 +622,34 @@ function applyTheme(theme) {
 }
 
 // ===== Cover Art =====
+function getCoverKey(track, group) {
+  return group?.id || track?.id || null;
+}
+
+function getCoverUrl(track, group) {
+  const key = getCoverKey(track, group);
+  return key ? (state.covers[key] || null) : null;
+}
+
+function getCoverType(track, group) {
+  const key = getCoverKey(track, group);
+  return key ? (state.coverTypes[key] || null) : null;
+}
+
+function setStoredCover(key, file) {
+  if (!key || !file) return;
+  if (state.covers[key]) URL.revokeObjectURL(state.covers[key]);
+  state.covers[key] = URL.createObjectURL(file);
+  state.coverTypes[key] = file.type || inferImageType(file.name);
+}
+
+function clearStoredCover(key) {
+  if (!key) return;
+  if (state.covers[key]) URL.revokeObjectURL(state.covers[key]);
+  delete state.covers[key];
+  delete state.coverTypes[key];
+}
+
 function setCoverImage(url) {
   if (url) {
     coverBg.style.backgroundImage = `url(${url})`;
@@ -628,7 +665,7 @@ function setCoverImage(url) {
 }
 
 function applyCoverForTrack(track, group) {
-  setCoverImage(group ? (state.covers[group.id] || null) : null);
+  setCoverImage(getCoverUrl(track, group));
 }
 
 // ===== Continue Banner =====
@@ -758,10 +795,13 @@ function renderSingle(book) {
   const isActive = book.id === state.currentId;
   const noFile   = !book.url;
   const done     = pct >= 98;
+  const coverUrl = state.covers[book.id];
   return `
     <div class="library-item ${isActive ? 'active' : ''} ${noFile ? 'no-file' : ''}" data-id="${book.id}">
       <div class="library-item-cover ${isActive && state.isPlaying ? 'spinning' : ''}">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+        ${coverUrl
+          ? `<img src="${coverUrl}" alt="" style="width:100%;height:100%;object-fit:cover;" />`
+          : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>`}
       </div>
       <div class="library-item-info">
         <div class="library-item-title">${escapeHtml(book.name)}</div>
@@ -826,9 +866,18 @@ function renderPlaylistItem(track, idx) {
 function renderAll() { renderLibrary(); }
 
 // ===== Player =====
+function getTrackArtist(track, group) {
+  return group?.name || track?.artist || 'AI Audio Reader';
+}
+
 function updatePlayerTitle(track, group) {
   trackTitle.textContent  = track.name;
   trackAuthor.textContent = (group ? group.name + ' · ' : '') + formatSize(track.size);
+}
+
+function updatePlayerTitle(track, group) {
+  trackTitle.textContent = track.name;
+  trackAuthor.textContent = getTrackArtist(track, group);
 }
 
 function loadBook(id, fromBookmark = false) {
@@ -864,6 +913,7 @@ function loadBook(id, fromBookmark = false) {
       saveLibraryMeta();
     }
     trackAuthor.textContent = (group ? group.name + ' · ' : '') + formatSize(track.size) + ' · ' + formatTime(audio.duration);
+    updatePlayerTitle(track, group);
     renderAll();
     updateMediaSession(track, group);
     // Refresh chapters panel if open
@@ -938,6 +988,51 @@ function initMediaSession() {
   } catch {}
 }
 
+function seekBy(seconds) {
+  if (!audio.src) return;
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const maxTime = duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
+  audio.currentTime = Math.max(0, Math.min(maxTime, audio.currentTime + seconds));
+  updateProgress();
+}
+
+function syncPlaybackState() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = state.isPlaying ? 'playing' : 'paused';
+}
+
+function updateMediaSession(track, group) {
+  if (!('mediaSession' in navigator) || !track) return;
+  const coverUrl = getCoverUrl(track, group);
+  const coverType = getCoverType(track, group) || 'image/jpeg';
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: track.name,
+    artist: getTrackArtist(track, group),
+    album: group?.name || 'AI Audio Reader',
+    artwork: coverUrl
+      ? [{ src: coverUrl, sizes: '512x512', type: coverType }]
+      : [{ src: new URL('icons/icon.svg', window.location.href).href, sizes: 'any', type: 'image/svg+xml' }],
+  });
+}
+
+function initMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.setActionHandler('play', playAudio);
+  navigator.mediaSession.setActionHandler('pause', pauseAudio);
+  navigator.mediaSession.setActionHandler('previoustrack', () => seekBy(-15));
+  navigator.mediaSession.setActionHandler('nexttrack', () => seekBy(15));
+  navigator.mediaSession.setActionHandler('seekbackward', ({ seekOffset }) => seekBy(-(seekOffset || 15)));
+  navigator.mediaSession.setActionHandler('seekforward', ({ seekOffset }) => seekBy(seekOffset || 15));
+  try {
+    navigator.mediaSession.setActionHandler('seekto', ({ seekTime }) => {
+      if (isFinite(seekTime)) {
+        audio.currentTime = seekTime;
+        updateProgress();
+      }
+    });
+  } catch {}
+}
+
 // ===== File Upload =====
 async function handleFiles(files) {
   const allFiles   = Array.from(files);
@@ -981,12 +1076,14 @@ async function handleFiles(files) {
 
     const coverFile = pendingCovers[folderName];
     if (coverFile) {
-      if (state.covers[group.id]) URL.revokeObjectURL(state.covers[group.id]);
-      state.covers[group.id] = URL.createObjectURL(coverFile);
+      setStoredCover(group.id, coverFile);
       await dbPut('cover_' + group.id, coverFile);
       if (state.currentId) {
         const ctx = findTrack(state.currentId);
-        if (ctx?.group?.id === group.id) setCoverImage(state.covers[group.id]);
+        if (ctx?.group?.id === group.id) {
+          applyCoverForTrack(ctx.track, ctx.group);
+          updateMediaSession(ctx.track, ctx.group);
+        }
       }
     }
 
@@ -1018,10 +1115,19 @@ async function handleFiles(files) {
   for (const file of singleFiles) {
     const name = cleanFileName(file);
     const existing = state.library.find(i => i.type === 'single' && i.name === name && i.size === file.size);
+    const rootCoverFile = pendingCovers.__root__;
     if (existing) {
       if (existing.url) URL.revokeObjectURL(existing.url);
       existing.url = URL.createObjectURL(file);
       await dbPut(existing.id, file);
+      if (rootCoverFile) {
+        setStoredCover(existing.id, rootCoverFile);
+        await dbPut('cover_' + existing.id, rootCoverFile);
+        if (state.currentId === existing.id) {
+          applyCoverForTrack(existing, null);
+          updateMediaSession(existing, null);
+        }
+      }
       continue;
     }
     const id  = generateId();
@@ -1029,6 +1135,14 @@ async function handleFiles(files) {
     const book = { id, type: 'single', name, size: file.size, url, duration: 0 };
     state.library.push(book);
     await dbPut(id, file);
+    if (rootCoverFile) {
+      setStoredCover(id, rootCoverFile);
+      await dbPut('cover_' + id, rootCoverFile);
+      if (state.currentId === id) {
+        applyCoverForTrack(book, null);
+        updateMediaSession(book, null);
+      }
+    }
     added++;
     const tmp = new Audio();
     tmp.preload = 'metadata';
@@ -1045,7 +1159,12 @@ async function handleFiles(files) {
 
   if (!state.currentId) {
     const first = getFlatTracks().find(t => t.url);
-    if (first) { const ctx = findTrack(first.id); updatePlayerTitle(ctx.track, ctx.group); }
+    if (first) {
+      const ctx = findTrack(first.id);
+      updatePlayerTitle(ctx.track, ctx.group);
+      applyCoverForTrack(ctx.track, ctx.group);
+      updateMediaSession(ctx.track, ctx.group);
+    }
   }
 }
 
@@ -1061,8 +1180,9 @@ async function clearLibrary() {
     if (item.type === 'single' && item.url) URL.revokeObjectURL(item.url);
     if (item.type === 'group') item.tracks.forEach(t => { if (t.url) URL.revokeObjectURL(t.url); });
   }
-  for (const url of Object.values(state.covers)) URL.revokeObjectURL(url);
+  for (const key of Object.keys(state.covers)) clearStoredCover(key);
   state.covers = {};
+  state.coverTypes = {};
 
   state.library = [];
   state.currentId = null;
@@ -1095,11 +1215,12 @@ async function resetAll() {
     if (item.type === 'single' && item.url) URL.revokeObjectURL(item.url);
     if (item.type === 'group') item.tracks.forEach(t => { if (t.url) URL.revokeObjectURL(t.url); });
   }
-  for (const url of Object.values(state.covers)) URL.revokeObjectURL(url);
+  for (const key of Object.keys(state.covers)) clearStoredCover(key);
 
   state.library          = [];
   state.currentId        = null;
   state.covers           = {};
+  state.coverTypes       = {};
   state.preBookmarkTime  = null;
 
   localStorage.clear();
@@ -1142,9 +1263,9 @@ function resetPlayerUI() {
 }
 
 // ===== Audio Events =====
-audio.addEventListener('play',  () => { state.isPlaying = true;  updatePlayUI(); renderAll(); if (chaptersOverlay.classList.contains('open')) renderPlaylist(); });
+audio.addEventListener('play',  () => { state.isPlaying = true;  updatePlayUI(); syncPlaybackState(); renderAll(); if (chaptersOverlay.classList.contains('open')) renderPlaylist(); });
 audio.addEventListener('pause', () => {
-  state.isPlaying = false; updatePlayUI(); renderAll();
+  state.isPlaying = false; updatePlayUI(); syncPlaybackState(); renderAll();
   if (state.currentId) saveProgress(state.currentId, audio.currentTime);
 });
 audio.addEventListener('ended', () => {
@@ -1152,7 +1273,7 @@ audio.addEventListener('ended', () => {
   if (state.currentId) saveProgress(state.currentId, 0);
   renderAll(); playNext();
 });
-audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); });
+audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); updateProgress(); });
 audio.addEventListener('timeupdate', () => { updateProgress(); throttledSave(); });
 
 document.addEventListener('visibilitychange', () => {
@@ -1167,8 +1288,18 @@ playBtn.addEventListener('click', () => {
   state.isPlaying ? pauseAudio() : playAudio();
 });
 
-rewindBtn.addEventListener('click',  () => { audio.currentTime = Math.max(0, audio.currentTime - 15); updateProgress(); });
-forwardBtn.addEventListener('click', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 15); updateProgress(); });
+rewindBtn.addEventListener('click',  () => seekBy(-15));
+forwardBtn.addEventListener('click', () => seekBy(15));
+
+function blurControlButton(event) {
+  const button = event.currentTarget;
+  window.setTimeout(() => button.blur(), 0);
+}
+
+[rewindBtn, forwardBtn, playBtn].forEach(btn => {
+  btn?.addEventListener('pointerup', blurControlButton);
+  btn?.addEventListener('pointercancel', blurControlButton);
+});
 
 progressRange.addEventListener('input', () => {
   if (audio.duration) {
@@ -1269,8 +1400,7 @@ async function removeGroup(groupId) {
     if (t.id === state.currentId) stopPlayback = true;
   }
   if (state.covers[group.id]) {
-    URL.revokeObjectURL(state.covers[group.id]);
-    delete state.covers[group.id];
+    clearStoredCover(group.id);
     await dbDelete('cover_' + group.id);
     if (stopPlayback) setCoverImage(null);
   }
@@ -1288,6 +1418,10 @@ async function removeSingle(id) {
   const book = state.library[idx];
   if (book.url) URL.revokeObjectURL(book.url);
   state.library.splice(idx, 1);
+  if (state.covers[id]) {
+    clearStoredCover(id);
+    await dbDelete('cover_' + id);
+  }
   clearProgress(id);
   removeBookmarksByTrackIds([id]);
   saveLibraryMeta();
@@ -1321,6 +1455,10 @@ function resetPlayer() {
   audio.pause(); audio.src = '';
   state.currentId = null; state.isPlaying = false;
   saveCurrentId(null);
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = 'none';
+  }
   setCoverImage(null);
   resetPlayerUI();
 }
@@ -1597,6 +1735,14 @@ async function init() {
       if (item.type === 'single' && storedIds.has(item.id)) {
         const f = await dbGet(item.id);
         if (f) item.url = URL.createObjectURL(f);
+        const coverId = 'cover_' + item.id;
+        if (storedIds.has(coverId)) {
+          const coverFile = await dbGet(coverId);
+          if (coverFile) {
+            state.covers[item.id] = URL.createObjectURL(coverFile);
+            state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
+          }
+        }
       } else if (item.type === 'group') {
         for (const t of item.tracks) {
           if (storedIds.has(t.id)) {
@@ -1607,7 +1753,10 @@ async function init() {
         const coverId = 'cover_' + item.id;
         if (storedIds.has(coverId)) {
           const coverFile = await dbGet(coverId);
-          if (coverFile) state.covers[item.id] = URL.createObjectURL(coverFile);
+          if (coverFile) {
+            state.covers[item.id] = URL.createObjectURL(coverFile);
+            state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
+          }
         }
       }
     }
@@ -1643,6 +1792,7 @@ async function init() {
       state.currentId = lastId;
       updatePlayerTitle(ctx.track, ctx.group);
       applyCoverForTrack(ctx.track, ctx.group);
+      updateMediaSession(ctx.track, ctx.group);
       const pos = loadProgress(lastId);
       if (pos > 5) showContinueBanner(ctx.track, ctx.group, pos);
     }
