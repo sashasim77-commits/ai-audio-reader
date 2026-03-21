@@ -8,6 +8,7 @@ const state = {
   speed:           1,
   covers:          {},   // item/group id -> cover blob URL
   coverTypes:      {},   // item/group id -> mime type
+  coverMediaSrcs:  {},   // item/group id -> data URL for MediaMetadata/Bluetooth
   preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
 };
 
@@ -261,26 +262,8 @@ updateBtn?.addEventListener('click', () => {
 checkUpdatesBtn?.addEventListener('click', () => checkForUpdates({ manual: true }));
 
 // ===== Web Audio / Visualizer =====
-let audioCtx = null, analyser = null;
+let analyser = null;
 let cachedGrad = null, cachedGradH = 0;
-
-async function initAudioCtx() {
-  if (audioCtx) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    await audioCtx.resume();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 128;
-    analyser.smoothingTimeConstant = 0.85;
-    const src = audioCtx.createMediaElementSource(audio);
-    src.connect(analyser);
-    analyser.connect(audioCtx.destination);
-    tickViz();
-  } catch (e) {
-    console.warn('Web Audio unavailable:', e);
-    audioCtx = null;
-  }
-}
 
 function tickViz() {
   requestAnimationFrame(tickViz);
@@ -487,6 +470,15 @@ async function extractEmbeddedArtwork(file) {
   return null;
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 async function ensureCoverForItem(key, file) {
   if (!key || !file || state.covers[key]) return false;
   const artwork = await extractEmbeddedArtwork(file);
@@ -494,7 +486,7 @@ async function ensureCoverForItem(key, file) {
 
   const ext = artwork.type === 'image/png' ? 'png' : artwork.type === 'image/webp' ? 'webp' : 'jpg';
   const coverFile = new File([artwork.bytes], `cover.${ext}`, { type: artwork.type });
-  setStoredCover(key, coverFile);
+  await setStoredCover(key, coverFile);
   await dbPut('cover_' + key, coverFile);
   return true;
 }
@@ -786,18 +778,31 @@ function getCoverType(track, group) {
   return key ? (state.coverTypes[key] || null) : null;
 }
 
-function setStoredCover(key, file) {
+function getCoverMediaSrc(track, group) {
+  const key = getCoverKey(track, group);
+  return key ? (state.coverMediaSrcs[key] || null) : null;
+}
+
+async function setStoredCover(key, file) {
   if (!key || !file) return;
   if (state.covers[key]) URL.revokeObjectURL(state.covers[key]);
   state.covers[key] = URL.createObjectURL(file);
   state.coverTypes[key] = file.type || inferImageType(file.name);
+  try {
+    state.coverMediaSrcs[key] = await fileToDataUrl(file);
+  } catch {
+    delete state.coverMediaSrcs[key];
+  }
 }
+
+tickViz();
 
 function clearStoredCover(key) {
   if (!key) return;
   if (state.covers[key]) URL.revokeObjectURL(state.covers[key]);
   delete state.covers[key];
   delete state.coverTypes[key];
+  delete state.coverMediaSrcs[key];
 }
 
 function setCoverImage(url) {
@@ -1076,8 +1081,6 @@ function loadBook(id, fromBookmark = false) {
 
 async function playAudio() {
   try {
-    if (!audioCtx) await initAudioCtx();
-    else if (audioCtx.state === 'suspended') await audioCtx.resume();
     await audio.play();
   } catch {}
 }
@@ -1153,7 +1156,7 @@ function syncPlaybackState() {
 
 function updateMediaSession(track, group) {
   if (!('mediaSession' in navigator) || !track) return;
-  const coverUrl = getCoverUrl(track, group);
+  const coverUrl = getCoverMediaSrc(track, group) || getCoverUrl(track, group);
   const coverType = getCoverType(track, group) || 'image/jpeg';
   navigator.mediaSession.metadata = new MediaMetadata({
     title: track.name,
@@ -1226,7 +1229,7 @@ async function handleFiles(files) {
 
     const coverFile = pendingCovers[folderName];
     if (coverFile) {
-      setStoredCover(group.id, coverFile);
+      await setStoredCover(group.id, coverFile);
       await dbPut('cover_' + group.id, coverFile);
       if (state.currentId) {
         const ctx = findTrack(state.currentId);
@@ -1282,7 +1285,7 @@ async function handleFiles(files) {
       existing.url = URL.createObjectURL(file);
       await dbPut(existing.id, file);
       if (rootCoverFile) {
-        setStoredCover(existing.id, rootCoverFile);
+        await setStoredCover(existing.id, rootCoverFile);
         await dbPut('cover_' + existing.id, rootCoverFile);
         if (state.currentId === existing.id) {
           applyCoverForTrack(existing, null);
@@ -1299,7 +1302,7 @@ async function handleFiles(files) {
     state.library.push(book);
     await dbPut(id, file);
     if (rootCoverFile) {
-      setStoredCover(id, rootCoverFile);
+      await setStoredCover(id, rootCoverFile);
       await dbPut('cover_' + id, rootCoverFile);
       if (state.currentId === id) {
         applyCoverForTrack(book, null);
@@ -1348,6 +1351,7 @@ async function clearLibrary() {
   for (const key of Object.keys(state.covers)) clearStoredCover(key);
   state.covers = {};
   state.coverTypes = {};
+  state.coverMediaSrcs = {};
 
   state.library = [];
   state.currentId = null;
@@ -1386,6 +1390,7 @@ async function resetAll() {
   state.currentId        = null;
   state.covers           = {};
   state.coverTypes       = {};
+  state.coverMediaSrcs   = {};
   state.preBookmarkTime  = null;
 
   localStorage.clear();
@@ -1933,6 +1938,7 @@ async function init() {
           if (coverFile) {
             state.covers[item.id] = URL.createObjectURL(coverFile);
             state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
+            try { state.coverMediaSrcs[item.id] = await fileToDataUrl(coverFile); } catch {}
           }
         }
       } else if (item.type === 'group') {
@@ -1955,6 +1961,7 @@ async function init() {
           if (coverFile) {
             state.covers[item.id] = URL.createObjectURL(coverFile);
             state.coverTypes[item.id] = coverFile.type || inferImageType(coverFile.name);
+            try { state.coverMediaSrcs[item.id] = await fileToDataUrl(coverFile); } catch {}
           }
         }
       }
