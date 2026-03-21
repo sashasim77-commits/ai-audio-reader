@@ -1,5 +1,5 @@
 (() => {
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.1.2';
   const CACHE_VERSION = `air-${APP_VERSION}`;
 
   self.APP_VERSION = APP_VERSION;

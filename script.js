@@ -1296,10 +1296,31 @@ function blurControlButton(event) {
   window.setTimeout(() => button.blur(), 0);
 }
 
+function markTouchInput(event) {
+  if (event.pointerType === 'touch' || event.type === 'touchstart') {
+    document.documentElement.classList.add('touch-input');
+  }
+}
+
+function setButtonPressed(event) {
+  markTouchInput(event);
+  event.currentTarget.classList.add('is-pressed');
+}
+
+function clearButtonPressed(event) {
+  event.currentTarget.classList.remove('is-pressed');
+}
+
 [rewindBtn, forwardBtn, playBtn].forEach(btn => {
+  btn?.addEventListener('pointerdown', setButtonPressed);
   btn?.addEventListener('pointerup', blurControlButton);
+  btn?.addEventListener('pointerup', clearButtonPressed);
   btn?.addEventListener('pointercancel', blurControlButton);
+  btn?.addEventListener('pointercancel', clearButtonPressed);
   btn?.addEventListener('click', blurControlButton);
+  btn?.addEventListener('touchstart', setButtonPressed, { passive: true });
+  btn?.addEventListener('touchend', clearButtonPressed, { passive: true });
+  btn?.addEventListener('touchcancel', clearButtonPressed, { passive: true });
 });
 
 progressRange.addEventListener('input', () => {
