@@ -207,12 +207,6 @@ body {
   background: rgba(0,245,212,0.06);
   box-shadow: 0 0 0 2px rgba(0,245,212,0.18);
 }
-.icon-btn.skip-btn:hover,
-.icon-btn.skip-btn:focus-visible {
-  color: inherit;
-  background: transparent;
-  box-shadow: none;
-}
 
 /* ===== Player View (NO SCROLL) ===== */
 .player-view {
@@ -355,29 +349,6 @@ body {
   z-index: 1; /* behind cover image, above placeholder */
 }
 .cover-art.playing .viz-canvas { opacity: 0.4; }
-
-/* Now playing badge */
-.now-playing-badge {
-  position: absolute;
-  bottom: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(5,5,20,0.9);
-  border: 1px solid var(--neon-a);
-  color: var(--neon-a);
-  font-family: 'Orbitron', monospace;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  padding: 2px 10px;
-  border-radius: 3px;
-  white-space: nowrap;
-  box-shadow: var(--glow-a);
-  opacity: 0;
-  transition: opacity 0.3s;
-  backdrop-filter: blur(8px);
-}
-.cover-art.playing ~ .now-playing-badge { opacity: 1; }
 
 /* ===== Track Info (compact) ===== */
 .track-info {
@@ -1444,12 +1415,6 @@ html[data-theme="light"] .header {
 html[data-theme="light"] .header-title { color: #6d28d9; text-shadow: none; }
 html[data-theme="light"] .icon-btn { color: #6b7280; }
 html[data-theme="light"] .icon-btn:hover { color: #7c3aed; background: rgba(124,58,237,0.07); }
-html[data-theme="light"] .icon-btn.skip-btn:hover,
-html[data-theme="light"] .icon-btn.skip-btn:focus-visible {
-  color: inherit;
-  background: transparent;
-  box-shadow: none;
-}
 
 html[data-theme="light"] .cover-art {
   background: #fff;
@@ -1462,8 +1427,6 @@ html[data-theme="light"] .cover-art.playing { animation: cover-pulse-light 3s ea
   50%      { box-shadow: 0 12px 48px rgba(124,58,237,0.2), 0 0 40px rgba(124,58,237,0.1); }
 }
 html[data-theme="light"] .cover-art.playing .viz-canvas { opacity: 0.25; }
-html[data-theme="light"] .now-playing-badge { background: #fff; border-color: rgba(124,58,237,0.25); color: #7c3aed; box-shadow: 0 2px 8px rgba(124,58,237,0.1); text-shadow: none; }
-
 html[data-theme="light"] .track-title  { color: #111827; text-shadow: none; }
 html[data-theme="light"] .track-author { color: #374151; }
 
