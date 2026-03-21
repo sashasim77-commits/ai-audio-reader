@@ -207,6 +207,12 @@ body {
   background: rgba(0,245,212,0.06);
   box-shadow: 0 0 0 2px rgba(0,245,212,0.18);
 }
+.icon-btn.skip-btn:hover,
+.icon-btn.skip-btn:focus-visible {
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
 
 /* ===== Player View (NO SCROLL) ===== */
 .player-view {
@@ -1438,6 +1444,12 @@ html[data-theme="light"] .header {
 html[data-theme="light"] .header-title { color: #6d28d9; text-shadow: none; }
 html[data-theme="light"] .icon-btn { color: #6b7280; }
 html[data-theme="light"] .icon-btn:hover { color: #7c3aed; background: rgba(124,58,237,0.07); }
+html[data-theme="light"] .icon-btn.skip-btn:hover,
+html[data-theme="light"] .icon-btn.skip-btn:focus-visible {
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
 
 html[data-theme="light"] .cover-art {
   background: #fff;
