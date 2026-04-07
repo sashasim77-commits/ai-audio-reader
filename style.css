@@ -173,13 +173,48 @@ body {
 
 .header-title {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  gap: 2px;
+}
+
+.header-primary,
+.header-secondary {
+  display: block;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-primary {
   font-family: 'Orbitron', 'Courier New', monospace;
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 2px;
   color: var(--neon-a);
   text-shadow: var(--glow-a);
+}
+
+.header-secondary {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: var(--text2);
+  text-shadow: none;
+}
+
+.header-title.active .header-primary {
+  font-size: 10px;
+  letter-spacing: 0.8px;
+}
+
+.header-title.active .header-secondary {
+  display: block;
 }
 
 /* ===== Icon Buttons ===== */

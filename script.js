@@ -132,6 +132,9 @@ const updateBtn       = document.getElementById('updateBtn');
 const updateDismiss   = document.getElementById('updateDismiss');
 const appVersionValue = document.getElementById('appVersionValue');
 const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+const headerStats     = document.getElementById('headerStats');
+const headerPrimary   = document.getElementById('headerPrimary');
+const headerSecondary = document.getElementById('headerSecondary');
 
 const APP_VERSION = window.APP_VERSION || 'dev';
 
@@ -319,6 +322,12 @@ function formatTime(s) {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 function pad(n) { return String(n).padStart(2,'0'); }
+
+function formatPercent(value) {
+  if (!isFinite(value) || value <= 0) return '0.0%';
+  if (value >= 99.95) return '100%';
+  return `${value.toFixed(1)}%`;
+}
 
 function formatSize(b) {
   if (!b) return '';
@@ -738,6 +747,70 @@ function getPrevTrack(id) {
   return i > 0 ? all[i - 1] : null;
 }
 
+function getTrackDuration(track) {
+  if (!track) return 0;
+  if (track.id === state.currentId && Number.isFinite(audio.duration) && audio.duration > 0) {
+    return audio.duration;
+  }
+  return Number.isFinite(track.duration) && track.duration > 0 ? track.duration : 0;
+}
+
+function getTrackListened(track) {
+  if (!track) return 0;
+  const duration = getTrackDuration(track);
+  let listened = loadProgress(track.id);
+
+  if (track.id === state.currentId) {
+    if (Number.isFinite(audio.currentTime)) listened = audio.currentTime;
+    if (audio.ended && duration > 0) listened = duration;
+  }
+
+  if (!Number.isFinite(listened) || listened < 0) listened = 0;
+  return duration > 0 ? Math.min(listened, duration) : listened;
+}
+
+function getCurrentBookStats() {
+  if (!state.currentId) return null;
+  const ctx = findTrack(state.currentId);
+  if (!ctx) return null;
+
+  const tracks = ctx.group ? ctx.group.tracks : [ctx.track];
+  let total = 0;
+  let listened = 0;
+
+  for (const track of tracks) {
+    total += getTrackDuration(track);
+    listened += getTrackListened(track);
+  }
+
+  if (total <= 0) return null;
+
+  return {
+    total,
+    listened: Math.min(listened, total),
+    remaining: Math.max(total - listened, 0),
+    percent: Math.min((listened / total) * 100, 100),
+  };
+}
+
+function updateHeaderStats() {
+  if (!headerStats || !headerPrimary || !headerSecondary) return;
+
+  const stats = getCurrentBookStats();
+  if (!stats) {
+    headerStats.classList.remove('active');
+    headerPrimary.textContent = 'AI AUDIO READER';
+    headerSecondary.textContent = 'Осталось 0:00';
+    headerSecondary.hidden = true;
+    return;
+  }
+
+  headerStats.classList.add('active');
+  headerPrimary.textContent = `${formatTime(stats.total)} всего · ${formatPercent(stats.percent)}`;
+  headerSecondary.textContent = `Осталось ${formatTime(stats.remaining)}`;
+  headerSecondary.hidden = false;
+}
+
 // ===== Persistence =====
 function saveLibraryMeta() {
   const meta = state.library.map(item => {
@@ -1073,7 +1146,10 @@ function renderPlaylistItem(track, idx) {
     </div>`;
 }
 
-function renderAll() { renderLibrary(); }
+function renderAll() {
+  renderLibrary();
+  updateHeaderStats();
+}
 
 // ===== Player =====
 function getTrackArtist(track, group) {
@@ -1478,6 +1554,7 @@ function updateProgress() {
   progressRange.style.setProperty('--p', pct + '%');
   currentTimeEl.textContent = formatTime(audio.currentTime);
   durationEl.textContent    = formatTime(audio.duration);
+  updateHeaderStats();
   if ('mediaSession' in navigator && audio.duration) {
     try { navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: audio.currentTime }); } catch {}
   }
@@ -1490,6 +1567,7 @@ function resetPlayerUI() {
   durationEl.textContent    = '0:00';
   trackTitle.textContent    = 'SELECT A TRACK';
   trackAuthor.textContent   = 'Open library or add files via settings';
+  updateHeaderStats();
   updatePlayUI();
 }
 
@@ -1501,7 +1579,7 @@ audio.addEventListener('pause', () => {
 });
 audio.addEventListener('ended', () => {
   state.isPlaying = false; updatePlayUI();
-  if (state.currentId) saveProgress(state.currentId, 0);
+  if (state.currentId) saveProgress(state.currentId, Number.isFinite(audio.duration) ? audio.duration : audio.currentTime);
   renderAll(); playNext();
 });
 audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); updateProgress(); });
@@ -1559,6 +1637,7 @@ progressRange.addEventListener('input', () => {
     audio.currentTime = (progressRange.value / 100) * audio.duration;
     currentTimeEl.textContent = formatTime(audio.currentTime);
     progressRange.style.setProperty('--p', progressRange.value + '%');
+    updateHeaderStats();
   }
 });
 
