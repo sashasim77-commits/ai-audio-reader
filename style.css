@@ -193,24 +193,24 @@ body {
 
 .header-primary {
   font-family: 'Share Tech Mono', 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.2px;
-  color: var(--neon-d);
-  text-shadow: 0 0 8px rgba(180,255,57,0.35);
+  color: var(--neon-a);
+  text-shadow: var(--glow-a);
   font-variant-numeric: tabular-nums;
 }
 
 .header-secondary {
   font-family: 'Share Tech Mono', 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.2px;
-  color: var(--neon-d);
+  color: var(--neon-a);
   text-shadow: none;
 }
 
 .header-title.active .header-primary {
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0.2px;
 }
 

@@ -342,6 +342,11 @@ function formatSize(b) {
   return b < 1048576 ? (b/1024).toFixed(0)+' KB' : (b/1048576).toFixed(1)+' MB';
 }
 
+function withFallbackText(value, fallback) {
+  const text = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+  return text || fallback;
+}
+
 function inferImageType(name = '') {
   const lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
@@ -984,15 +989,18 @@ function loadAndSeek(id, pos) {
   const ctx = findTrack(id);
   if (!ctx) return;
   const { track, group } = ctx;
+  if (!track.url) { showToast('Re-upload required'); return; }
   state.currentId = id;
   saveCurrentId(id);
   audio.src = track.url;
   audio.playbackRate = state.speed;
   audio.addEventListener('loadedmetadata', () => {
-    audio.currentTime = Math.min(pos, audio.duration - 1);
+    const maxPos = audio.duration > 1 ? audio.duration - 1 : audio.duration;
+    audio.currentTime = Math.max(0, Math.min(pos, maxPos));
   }, { once: true });
   updatePlayerTitle(track, group);
   applyCoverForTrack(track, group);
+  updateMediaSession(track, group);
   playAudio();
   renderAll();
 }
@@ -1161,7 +1169,15 @@ function renderAll() {
 
 // ===== Player =====
 function getTrackArtist(track, group) {
-  return group?.name || track?.artist || 'AI Audio Reader';
+  return withFallbackText(group?.name || track?.artist, 'AI Audio Reader');
+}
+
+function getTrackTitle(track) {
+  return withFallbackText(track?.name, 'Unknown Track');
+}
+
+function getTrackAlbum(group) {
+  return withFallbackText(group?.name, 'AI Audio Reader');
 }
 
 function updatePlayerTitle(track, group) {
@@ -1170,7 +1186,7 @@ function updatePlayerTitle(track, group) {
 }
 
 function updatePlayerTitle(track, group) {
-  trackTitle.textContent = track.name;
+  trackTitle.textContent = getTrackTitle(track);
   trackAuthor.textContent = getTrackArtist(track, group);
 }
 
@@ -1300,9 +1316,9 @@ function updateMediaSession(track, group) {
   const coverType = getCoverType(track, group) || 'image/jpeg';
   navigator.mediaSession.metadata = null;
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: track.name,
+    title: getTrackTitle(track),
     artist: getTrackArtist(track, group),
-    album: group?.name || 'AI Audio Reader',
+    album: getTrackAlbum(group),
     artwork: coverArtworks?.length
       ? coverArtworks
       : coverUrl
@@ -1580,7 +1596,17 @@ function resetPlayerUI() {
 }
 
 // ===== Audio Events =====
-audio.addEventListener('play',  () => { state.isPlaying = true;  updatePlayUI(); syncPlaybackState(); renderAll(); if (chaptersOverlay.classList.contains('open')) renderPlaylist(); });
+audio.addEventListener('play',  () => {
+  state.isPlaying = true;
+  updatePlayUI();
+  syncPlaybackState();
+  if (state.currentId) {
+    const ctx = findTrack(state.currentId);
+    if (ctx) updateMediaSession(ctx.track, ctx.group);
+  }
+  renderAll();
+  if (chaptersOverlay.classList.contains('open')) renderPlaylist();
+});
 audio.addEventListener('pause', () => {
   state.isPlaying = false; updatePlayUI(); syncPlaybackState(); renderAll();
   if (state.currentId) saveProgress(state.currentId, audio.currentTime);
@@ -2145,12 +2171,18 @@ async function init() {
   if (lastId) {
     const ctx = findTrack(lastId);
     if (ctx?.track.url) {
+      const pos = loadProgress(lastId);
       state.currentId = lastId;
+      audio.src = ctx.track.url;
+      audio.playbackRate = state.speed;
+      audio.addEventListener('loadedmetadata', () => {
+        const maxPos = audio.duration > 1 ? audio.duration - 1 : audio.duration;
+        audio.currentTime = Math.max(0, Math.min(pos, maxPos));
+      }, { once: true });
       updatePlayerTitle(ctx.track, ctx.group);
       applyCoverForTrack(ctx.track, ctx.group);
       updateMediaSession(ctx.track, ctx.group);
-      const pos = loadProgress(lastId);
-      if (pos > 5) showContinueBanner(ctx.track, ctx.group, pos);
+      hideContinueBanner();
     }
   }
 
