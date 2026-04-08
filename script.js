@@ -324,9 +324,17 @@ function formatTime(s) {
 function pad(n) { return String(n).padStart(2,'0'); }
 
 function formatPercent(value) {
-  if (!isFinite(value) || value <= 0) return '0.0%';
+  if (!isFinite(value) || value <= 0) return '0%';
   if (value >= 99.95) return '100%';
-  return `${value.toFixed(1)}%`;
+  return `${Math.round(value)}%`;
+}
+
+function formatHeaderTime(s) {
+  if (!isFinite(s) || s < 0) return '0:00:00';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return `${h}:${pad(m)}:${pad(sec)}`;
 }
 
 function formatSize(b) {
@@ -799,16 +807,16 @@ function updateHeaderStats() {
   const stats = getCurrentBookStats();
   if (!stats) {
     headerStats.classList.remove('active');
-    headerPrimary.textContent = 'AI AUDIO READER';
-    headerSecondary.textContent = 'Осталось 0:00';
+    headerPrimary.textContent = '0:00:00 0% 0:00:00';
+    headerSecondary.textContent = '';
     headerSecondary.hidden = true;
     return;
   }
 
   headerStats.classList.add('active');
-  headerPrimary.textContent = `${formatTime(stats.total)} всего · ${formatPercent(stats.percent)}`;
-  headerSecondary.textContent = `Осталось ${formatTime(stats.remaining)}`;
-  headerSecondary.hidden = false;
+  headerPrimary.textContent = `${formatHeaderTime(stats.total)} ${formatPercent(stats.percent)} ${formatHeaderTime(stats.remaining)}`;
+  headerSecondary.textContent = '';
+  headerSecondary.hidden = true;
 }
 
 // ===== Persistence =====
