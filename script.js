@@ -11,6 +11,8 @@ const state = {
   coverMediaSrcs:  {},   // item/group id -> data URL for MediaMetadata/Bluetooth
   coverArtworks:   {},   // item/group id -> MediaMetadata artwork variants
   preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
+  completedBookKey: null,
+  pendingLibraryReveal: null,
 };
 
 const STORAGE_KEY  = 'air_library';
@@ -24,6 +26,7 @@ const BOOKMARKS_KEY= 'air_bookmarks';
 const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
 const COVER_NAMES  = /^(cover|folder|front|album|albumart|artwork)\.(jpg|jpeg|png|webp)$/i;
 const SPEED_CYCLE  = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
+const COMPLETE_MARGIN_SEC = 0.25;
 
 // ===== IndexedDB =====
 const IDB_NAME  = 'AudioReaderDB';
@@ -754,6 +757,13 @@ function getNextTrack(id) {
   return i >= 0 ? all[i + 1] ?? null : null;
 }
 
+function getNextTrackInSameBook(id) {
+  const ctx = findTrack(id);
+  if (!ctx?.group) return null;
+  const idx = ctx.group.tracks.findIndex(track => track.id === id);
+  return idx >= 0 ? ctx.group.tracks[idx + 1] ?? null : null;
+}
+
 function getPrevTrack(id) {
   const all = getFlatTracks();
   const i   = all.findIndex(t => t.id === id);
@@ -782,28 +792,68 @@ function getTrackListened(track) {
   return duration > 0 ? Math.min(listened, duration) : listened;
 }
 
-function getCurrentBookStats() {
-  if (!state.currentId) return null;
-  const ctx = findTrack(state.currentId);
-  if (!ctx) return null;
+function getTrackProgressStats(track) {
+  const total = getTrackDuration(track);
+  const listened = getTrackListened(track);
+  if (total <= 0) {
+    return { total: 0, listened: 0, remaining: 0, percent: 0, done: false };
+  }
 
-  const tracks = ctx.group ? ctx.group.tracks : [ctx.track];
+  const safeListened = Math.min(listened, total);
+  const remaining = Math.max(total - safeListened, 0);
+  const percent = remaining <= COMPLETE_MARGIN_SEC ? 100 : Math.min((safeListened / total) * 100, 100);
+
+  return {
+    total,
+    listened: safeListened,
+    remaining,
+    percent,
+    done: remaining <= COMPLETE_MARGIN_SEC,
+  };
+}
+
+function getBookProgressStats(item) {
+  if (!item) return null;
+  const tracks = item.type === 'group' ? item.tracks : [item];
   let total = 0;
   let listened = 0;
 
   for (const track of tracks) {
-    total += getTrackDuration(track);
-    listened += getTrackListened(track);
+    const stats = getTrackProgressStats(track);
+    total += stats.total;
+    listened += stats.listened;
   }
 
   if (total <= 0) return null;
 
+  const remaining = Math.max(total - listened, 0);
   return {
     total,
     listened: Math.min(listened, total),
-    remaining: Math.max(total - listened, 0),
-    percent: Math.min((listened / total) * 100, 100),
+    remaining,
+    percent: remaining <= COMPLETE_MARGIN_SEC ? 100 : Math.min((listened / total) * 100, 100),
+    done: remaining <= COMPLETE_MARGIN_SEC,
   };
+}
+
+function getBookKeyForContext(ctx) {
+  if (!ctx?.track) return null;
+  return ctx.group ? ctx.group.id : ctx.track.id;
+}
+
+function clearCompletedBookKeyForTrack(trackId) {
+  if (!trackId || !state.completedBookKey) return;
+  const ctx = findTrack(trackId);
+  if (getBookKeyForContext(ctx) === state.completedBookKey) {
+    state.completedBookKey = null;
+  }
+}
+
+function getCurrentBookStats() {
+  if (!state.currentId) return null;
+  const ctx = findTrack(state.currentId);
+  if (!ctx) return null;
+  return getBookProgressStats(ctx.group || ctx.track);
 }
 
 function updateHeaderStats() {
@@ -855,7 +905,7 @@ function saveProgress(id, pos) {
   if (!id || !isFinite(pos)) return;
   try {
     const all = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
-    all[id] = Math.floor(pos);
+    all[id] = Math.max(0, Math.round(pos * 1000) / 1000);
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
   } catch {}
 }
@@ -1023,22 +1073,21 @@ function renderLibrary() {
 }
 
 function renderGroup(group) {
-  const tracks   = group.tracks;
-  const total    = tracks.reduce((s, t) => s + (t.duration || 0), 0);
-  const consumed = tracks.reduce((s, t) => {
-    const p = loadProgress(t.id); return s + Math.min(p, t.duration || p);
-  }, 0);
-  const pct      = total > 0 ? Math.round((consumed / total) * 100) : 0;
-  const hasActive= tracks.some(t => t.id === state.currentId);
+  const tracks = group.tracks;
+  const stats = getBookProgressStats(group);
+  const total = stats?.total || 0;
+  const pct = stats ? Math.round(stats.percent) : 0;
+  const hasActive = tracks.some(t => t.id === state.currentId);
   const expanded = group.collapsed === false;
   const coverUrl = state.covers[group.id];
+  const isCompleted = state.completedBookKey === group.id || stats?.done;
 
   const coverHtml = coverUrl
     ? `<img src="${coverUrl}" style="width:42px;height:42px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
     : `<div class="group-cover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>`;
 
   return `
-    <div class="library-group ${hasActive ? 'active' : ''} ${expanded ? 'expanded' : ''}" data-group-id="${group.id}">
+    <div class="library-group ${hasActive ? 'active' : ''} ${expanded ? 'expanded' : ''} ${isCompleted ? 'completed-book' : ''}" data-group-id="${group.id}">
       <div class="group-header">
         <div class="group-toggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
         ${coverHtml}
@@ -1048,7 +1097,7 @@ function renderGroup(group) {
           <div class="library-progress-bar"><div class="library-progress-fill" style="width:${pct}%"></div></div>
         </div>
         <div class="group-actions">
-          <button class="library-item-delete" data-delete-group="${group.id}" title="Remove">
+          <button class="library-item-delete" data-delete-group="${group.id}" title="Delete book">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
@@ -1060,11 +1109,11 @@ function renderGroup(group) {
 }
 
 function renderTrackInGroup(track, group) {
-  const pos  = loadProgress(track.id);
-  const pct  = track.duration > 0 ? Math.round((pos / track.duration) * 100) : 0;
+  const stats = getTrackProgressStats(track);
+  const pct  = Math.round(stats.percent);
   const isActive = track.id === state.currentId;
   const noFile   = !track.url;
-  const done     = pct >= 98;
+  const done     = stats.done;
   return `
     <div class="library-item ${isActive ? 'active' : ''} ${noFile ? 'no-file' : ''}" data-id="${track.id}" data-in-group="${group.id}">
       <div class="library-item-cover ${isActive && state.isPlaying ? 'spinning' : ''}">
@@ -1073,7 +1122,7 @@ function renderTrackInGroup(track, group) {
       <div class="library-item-info">
         <div class="library-item-title">${escapeHtml(track.name)}</div>
         <div class="library-item-meta">
-          <span>${formatTime(track.duration || 0)}</span>
+          <span>${formatTime(stats.total || 0)}</span>
           ${done ? '<span class="badge-done">✓</span>' : pct > 0 ? `<span>· ${pct}%</span>` : ''}
           ${noFile ? '<span class="badge-upload">⚠</span>' : ''}
         </div>
@@ -1081,7 +1130,7 @@ function renderTrackInGroup(track, group) {
       </div>
       <div class="library-item-actions">
         ${pct > 0 ? `<button class="lib-action-btn" data-reset="${track.id}" title="Reset">↩</button>` : ''}
-        <button class="library-item-delete" data-delete-track="${track.id}" title="Remove">
+        <button class="library-item-delete" data-delete-track="${track.id}" title="Delete chapter">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
         </button>
       </div>
@@ -1089,14 +1138,14 @@ function renderTrackInGroup(track, group) {
 }
 
 function renderSingle(book) {
-  const pos  = loadProgress(book.id);
-  const pct  = book.duration > 0 ? Math.round((pos / book.duration) * 100) : 0;
+  const stats = getTrackProgressStats(book);
+  const pct  = Math.round(stats.percent);
   const isActive = book.id === state.currentId;
   const noFile   = !book.url;
-  const done     = pct >= 98;
+  const done     = state.completedBookKey === book.id || stats.done;
   const coverUrl = state.covers[book.id];
   return `
-    <div class="library-item ${isActive ? 'active' : ''} ${noFile ? 'no-file' : ''}" data-id="${book.id}">
+    <div class="library-item ${isActive ? 'active' : ''} ${noFile ? 'no-file' : ''} ${done ? 'completed-book' : ''}" data-id="${book.id}">
       <div class="library-item-cover ${isActive && state.isPlaying ? 'spinning' : ''}">
         ${coverUrl
           ? `<img src="${coverUrl}" alt="" style="width:100%;height:100%;object-fit:cover;" />`
@@ -1105,7 +1154,7 @@ function renderSingle(book) {
       <div class="library-item-info">
         <div class="library-item-title">${escapeHtml(book.name)}</div>
         <div class="library-item-meta">
-          <span>${formatTime(book.duration || 0)}</span>
+          <span>${formatTime(stats.total || 0)}</span>
           ${done ? '<span class="badge-done">✓ done</span>' : pct > 0 ? `<span>· ${pct}%</span>` : ''}
           ${noFile ? '<span class="badge-upload">⚠ re-upload</span>' : ''}
         </div>
@@ -1113,7 +1162,7 @@ function renderSingle(book) {
       </div>
       <div class="library-item-actions">
         ${pct > 0 ? `<button class="lib-action-btn" data-reset="${book.id}" title="Reset">↩</button>` : ''}
-        <button class="library-item-delete" data-delete-single="${book.id}" title="Remove">
+        <button class="library-item-delete" data-delete-single="${book.id}" title="Delete book">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
         </button>
       </div>
@@ -1144,8 +1193,8 @@ function renderPlaylist() {
 
 function renderPlaylistItem(track, idx) {
   const isActive = track.id === state.currentId;
-  const pos  = loadProgress(track.id);
-  const pct  = track.duration > 0 ? (pos / track.duration) * 100 : 0;
+  const stats = getTrackProgressStats(track);
+  const pct  = stats.percent;
   const noFile = !track.url;
   return `
     <div class="playlist-item ${isActive ? 'active' : ''} ${noFile ? 'no-file' : ''}" data-id="${track.id}">
@@ -1516,6 +1565,8 @@ async function clearLibrary() {
   state.library = [];
   state.currentId = null;
   state.preBookmarkTime = null;
+  state.completedBookKey = null;
+  state.pendingLibraryReveal = null;
 
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(PROGRESS_KEY);
@@ -1553,6 +1604,8 @@ async function resetAll() {
   state.coverMediaSrcs   = {};
   state.coverArtworks    = {};
   state.preBookmarkTime  = null;
+  state.completedBookKey = null;
+  state.pendingLibraryReveal = null;
 
   localStorage.clear();
   await dbClearAll();
@@ -1573,7 +1626,8 @@ async function resetAll() {
 // ===== Progress =====
 function updateProgress() {
   if (!audio.duration) return;
-  const pct = (audio.currentTime / audio.duration) * 100;
+  const remaining = Math.max(audio.duration - audio.currentTime, 0);
+  const pct = remaining <= COMPLETE_MARGIN_SEC ? 100 : (audio.currentTime / audio.duration) * 100;
   progressRange.value = pct;
   progressRange.style.setProperty('--p', pct + '%');
   currentTimeEl.textContent = formatTime(audio.currentTime);
@@ -1613,8 +1667,31 @@ audio.addEventListener('pause', () => {
 });
 audio.addEventListener('ended', () => {
   state.isPlaying = false; updatePlayUI();
-  if (state.currentId) saveProgress(state.currentId, Number.isFinite(audio.duration) ? audio.duration : audio.currentTime);
-  renderAll(); playNext();
+  if (!state.currentId) return;
+
+  const endedId = state.currentId;
+  const endedCtx = findTrack(endedId);
+  if (!endedCtx) return;
+
+  saveProgress(endedId, Number.isFinite(audio.duration) ? audio.duration : audio.currentTime);
+
+  const nextInSameBook = getNextTrackInSameBook(endedId);
+  if (nextInSameBook) {
+    renderAll();
+    loadBook(nextInSameBook.id);
+    return;
+  }
+
+  state.completedBookKey = getBookKeyForContext(endedCtx);
+  if (endedCtx.group && endedCtx.group.collapsed !== false) {
+    endedCtx.group.collapsed = false;
+    saveLibraryMeta();
+  }
+  state.pendingLibraryReveal = { groupId: endedCtx.group?.id || null, trackId: endedCtx.track.id };
+  renderAll();
+  closeAllSheets();
+  openLibrary();
+  showToast('Book finished');
 });
 audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); updateProgress(); });
 audio.addEventListener('timeupdate', () => { updateProgress(); throttledSave(); });
@@ -1707,11 +1784,29 @@ function openLibrary() {
   renderLibrary();
   libraryPanel.classList.add('open');
   overlay.classList.add('visible');
+  if (state.pendingLibraryReveal) {
+    requestAnimationFrame(revealPendingLibraryItem);
+  }
 }
 
 function closeLibraryPanel() {
   libraryPanel.classList.remove('open');
   overlay.classList.remove('visible');
+}
+
+function revealPendingLibraryItem() {
+  const target = state.pendingLibraryReveal;
+  if (!target || !libraryList) return;
+
+  const selector = target.trackId
+    ? `.library-item[data-id="${target.trackId}"]`
+    : target.groupId
+      ? `.library-group[data-group-id="${target.groupId}"]`
+      : null;
+
+  const el = selector ? libraryList.querySelector(selector) : null;
+  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  state.pendingLibraryReveal = null;
 }
 
 // Library delegated events
@@ -1757,6 +1852,7 @@ async function removeGroup(groupId) {
   const idx = state.library.findIndex(g => g.type === 'group' && g.id === groupId);
   if (idx === -1) return;
   const group = state.library[idx];
+  if (!confirm(`Delete the whole book "${group.name}"?`)) return;
   const removedTrackIds = group.tracks.map(t => t.id);
   let stopPlayback = false;
   for (const t of group.tracks) {
@@ -1771,19 +1867,22 @@ async function removeGroup(groupId) {
     if (stopPlayback) setCoverImage(null);
   }
   state.library.splice(idx, 1);
+  if (state.completedBookKey === group.id) state.completedBookKey = null;
   removeBookmarksByTrackIds(removedTrackIds);
   saveLibraryMeta();
   if (stopPlayback) resetPlayer();
   renderAll();
-  showToast('Book removed');
+  showToast('Book deleted');
 }
 
 async function removeSingle(id) {
   const idx = state.library.findIndex(i => i.type === 'single' && i.id === id);
   if (idx === -1) return;
   const book = state.library[idx];
+  if (!confirm(`Delete "${book.name}"?`)) return;
   if (book.url) URL.revokeObjectURL(book.url);
   state.library.splice(idx, 1);
+  if (state.completedBookKey === id) state.completedBookKey = null;
   if (state.covers[id]) {
     clearStoredCover(id);
     await dbDelete('cover_' + id);
@@ -1794,7 +1893,7 @@ async function removeSingle(id) {
   await dbDelete(id);
   if (state.currentId === id) resetPlayer();
   renderAll();
-  showToast('Removed');
+  showToast('Book deleted');
 }
 
 async function removeTrackFromGroup(trackId) {
@@ -1803,8 +1902,10 @@ async function removeTrackFromGroup(trackId) {
     const tIdx = item.tracks.findIndex(t => t.id === trackId);
     if (tIdx === -1) continue;
     const track = item.tracks[tIdx];
+    if (!confirm(`Delete chapter "${track.name}" from "${item.name}"?`)) return;
     if (track.url) URL.revokeObjectURL(track.url);
     item.tracks.splice(tIdx, 1);
+    clearCompletedBookKeyForTrack(trackId);
     clearProgress(trackId);
     removeBookmarksByTrackIds([trackId]);
     await dbDelete(trackId);
@@ -1830,6 +1931,7 @@ function resetPlayer() {
 }
 
 function resetProgress(id) {
+  clearCompletedBookKeyForTrack(id);
   clearProgress(id);
   if (state.currentId === id) { audio.currentTime = 0; updateProgress(); }
   renderAll();
