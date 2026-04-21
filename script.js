@@ -161,6 +161,7 @@ let swRegistration = null;
 let swUpdateReady = false;
 let swManualCheckInFlight = false;
 let swRefreshPending = false;
+let swReloadRequested = false;
 
 function setAppVersionUI() {
   if (appVersionValue) appVersionValue.textContent = `v${APP_VERSION}`;
@@ -204,12 +205,8 @@ async function registerServiceWorker() {
     if (reg.installing) watchInstallingWorker(reg.installing, reg);
     reg.addEventListener('updatefound', () => watchInstallingWorker(reg.installing, reg));
 
-    setInterval(() => {
-      reg.update().catch(() => {});
-    }, 60000);
-
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (swRefreshPending) return;
+      if (!swReloadRequested || swRefreshPending) return;
       swRefreshPending = true;
       window.location.reload();
     });
@@ -261,6 +258,7 @@ updateDismiss?.addEventListener('click', hideUpdateBanner);
 updateBtn?.addEventListener('click', () => {
   if (swRegistration?.waiting) {
     hideUpdateBanner();
+    swReloadRequested = true;
     swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
     return;
   }
@@ -1358,6 +1356,29 @@ function syncPlaybackState() {
   navigator.mediaSession.playbackState = state.isPlaying ? 'playing' : 'paused';
 }
 
+function syncPositionState() {
+  if (!('mediaSession' in navigator) || !audio.duration) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: audio.duration,
+      playbackRate: audio.playbackRate,
+      position: audio.currentTime,
+    });
+  } catch {}
+}
+
+function refreshActiveMediaSession() {
+  if (!state.currentId) {
+    syncPlaybackState();
+    return;
+  }
+  const ctx = findTrack(state.currentId);
+  if (!ctx) return;
+  updateMediaSession(ctx.track, ctx.group);
+  syncPlaybackState();
+  syncPositionState();
+}
+
 function updateMediaSession(track, group) {
   if (!('mediaSession' in navigator) || !track) return;
   const coverArtworks = getCoverArtworks(track, group);
@@ -1695,12 +1716,36 @@ audio.addEventListener('ended', () => {
 });
 audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); updateProgress(); });
 audio.addEventListener('timeupdate', () => { updateProgress(); throttledSave(); });
+audio.addEventListener('stalled', () => {
+  if (!audio.src) return;
+  console.warn('[audio] stalled', { currentId: state.currentId, currentTime: audio.currentTime });
+  if (state.isPlaying) showToast('Playback stalled. Tap Play if it does not resume');
+});
+audio.addEventListener('waiting', () => {
+  if (!audio.src || !state.isPlaying) return;
+  console.warn('[audio] waiting', { currentId: state.currentId, currentTime: audio.currentTime });
+});
+audio.addEventListener('error', () => {
+  if (!audio.src) return;
+  console.warn('[audio] error', {
+    currentId: state.currentId,
+    code: audio.error?.code ?? null,
+    message: audio.error?.message ?? null,
+  });
+  showToast('Playback error. Tap Play to resume');
+  refreshActiveMediaSession();
+});
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state.currentId) saveProgress(state.currentId, audio.currentTime);
+  if (document.hidden) {
+    if (state.currentId) saveProgress(state.currentId, audio.currentTime);
+    return;
+  }
+  refreshActiveMediaSession();
 });
 window.addEventListener('beforeunload', () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
 window.addEventListener('pagehide',     () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
+window.addEventListener('pageshow', refreshActiveMediaSession);
 
 // ===== Control Listeners =====
 playBtn.addEventListener('click', () => {
@@ -2284,6 +2329,7 @@ async function init() {
       updatePlayerTitle(ctx.track, ctx.group);
       applyCoverForTrack(ctx.track, ctx.group);
       updateMediaSession(ctx.track, ctx.group);
+      syncPlaybackState();
       hideContinueBanner();
     }
   }
