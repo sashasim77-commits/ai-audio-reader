@@ -13,6 +13,10 @@ const state = {
   preBookmarkTime: null, // { trackId, time } — saved before bookmark jump
   completedBookKey: null,
   pendingLibraryReveal: null,
+  wantsPlayback: false,
+  intentionalPauseUntil: 0,
+  autoResumeAttempts: 0,
+  lastProgressAt: 0,
 };
 
 const STORAGE_KEY  = 'air_library';
@@ -27,6 +31,8 @@ const AUDIO_EXT    = /\.(mp3|m4a|m4b|ogg|wav|aac|flac|opus)$/i;
 const COVER_NAMES  = /^(cover|folder|front|album|albumart|artwork)\.(jpg|jpeg|png|webp)$/i;
 const SPEED_CYCLE  = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
 const COMPLETE_MARGIN_SEC = 0.25;
+const UNEXPECTED_PAUSE_RESUME_MS = 900;
+const STALL_RECOVERY_MS = 12000;
 
 // ===== IndexedDB =====
 const IDB_NAME  = 'AudioReaderDB';
@@ -1319,6 +1325,83 @@ async function restoreLastTrack({ autoplay = false, silent = false } = {}) {
   }
 }
 
+let unexpectedResumeTimer = null;
+let stallRecoveryTimer = null;
+
+function cancelUnexpectedResume() {
+  clearTimeout(unexpectedResumeTimer);
+  unexpectedResumeTimer = null;
+}
+
+function cancelStallRecovery() {
+  clearTimeout(stallRecoveryTimer);
+  stallRecoveryTimer = null;
+}
+
+function markPlaybackWanted() {
+  state.wantsPlayback = true;
+}
+
+function markIntentionalPause(windowMs = 2500) {
+  state.wantsPlayback = false;
+  state.intentionalPauseUntil = Date.now() + windowMs;
+  state.autoResumeAttempts = 0;
+  cancelUnexpectedResume();
+  cancelStallRecovery();
+}
+
+function isPauseExpected() {
+  return !state.wantsPlayback
+    || audio.ended
+    || audioRecoveryInFlight
+    || Date.now() < state.intentionalPauseUntil;
+}
+
+function scheduleUnexpectedResume(reason) {
+  if (!state.currentId || !state.wantsPlayback || audio.ended) return;
+  if (state.autoResumeAttempts >= 2 || unexpectedResumeTimer) return;
+
+  unexpectedResumeTimer = setTimeout(async () => {
+    unexpectedResumeTimer = null;
+    if (!state.currentId || !state.wantsPlayback || !audio.paused || audio.ended) return;
+
+    state.autoResumeAttempts += 1;
+    console.warn('[audio] unexpected pause, attempting resume', {
+      reason,
+      attempt: state.autoResumeAttempts,
+      currentId: state.currentId,
+      currentTime: audio.currentTime,
+    });
+
+    const resumed = await playAudio({ skipRestore: false });
+    if (!resumed && state.wantsPlayback) {
+      await recoverCurrentAudioSource();
+    }
+  }, UNEXPECTED_PAUSE_RESUME_MS);
+}
+
+function scheduleStallRecovery(reason) {
+  if (!state.currentId || !state.wantsPlayback || audio.ended || stallRecoveryTimer) return;
+
+  const stalledAt = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+  stallRecoveryTimer = setTimeout(async () => {
+    stallRecoveryTimer = null;
+    if (!state.currentId || !state.wantsPlayback || audio.ended) return;
+
+    const nowTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const advanced = Math.abs(nowTime - stalledAt) > 0.5;
+    if (advanced) return;
+
+    console.warn('[audio] stalled too long, recovering source', {
+      reason,
+      currentId: state.currentId,
+      currentTime: audio.currentTime,
+    });
+    const recovered = await recoverCurrentAudioSource();
+    if (!recovered && state.wantsPlayback) scheduleUnexpectedResume(`${reason}:recover-failed`);
+  }, STALL_RECOVERY_MS);
+}
+
 function loadBook(id, fromBookmark = false) {
   const ctx = findTrack(id);
   if (!ctx) return;
@@ -1364,15 +1447,20 @@ function loadBook(id, fromBookmark = false) {
 }
 
 async function playAudio({ skipRestore = false } = {}) {
+  markPlaybackWanted();
   try {
     if (!skipRestore && !audio.src) {
       const restored = await restoreLastTrack({ silent: true });
       if (!restored) {
+        state.wantsPlayback = false;
         showToast('Select a track first');
         return false;
       }
     }
-    if (!audio.src) return false;
+    if (!audio.src) {
+      state.wantsPlayback = false;
+      return false;
+    }
     await audio.play();
     return true;
   } catch (e) {
@@ -1387,7 +1475,10 @@ async function playAudio({ skipRestore = false } = {}) {
   }
 }
 
-function pauseAudio() { audio.pause(); }
+function pauseAudio({ intentional = true } = {}) {
+  if (intentional) markIntentionalPause();
+  audio.pause();
+}
 
 function updatePlayUI() {
   if (state.isPlaying) {
@@ -1457,7 +1548,7 @@ async function recoverCurrentAudioSource() {
   const currentPos = Number.isFinite(audio.currentTime) && audio.currentTime > 0
     ? audio.currentTime
     : loadProgress(state.currentId);
-  const shouldResume = state.isPlaying;
+  const shouldResume = state.wantsPlayback || state.isPlaying;
 
   audioRecoveryInFlight = true;
   try {
@@ -1669,6 +1760,7 @@ async function clearLibrary() {
   if (!state.library.length) { showToast('Library is already empty'); return; }
   if (!confirm('Clear the entire library?')) return;
 
+  markIntentionalPause();
   audio.pause(); audio.src = '';
   state.isPlaying = false; updatePlayUI();
 
@@ -1708,6 +1800,7 @@ async function clearLibrary() {
 async function resetAll() {
   if (!confirm('Reset ALL data? Library, bookmarks, settings — everything will be deleted.')) return;
 
+  markIntentionalPause();
   audio.pause(); audio.src = '';
   state.isPlaying = false;
 
@@ -1772,6 +1865,10 @@ function resetPlayerUI() {
 // ===== Audio Events =====
 audio.addEventListener('play',  () => {
   state.isPlaying = true;
+  state.wantsPlayback = true;
+  state.autoResumeAttempts = 0;
+  cancelUnexpectedResume();
+  cancelStallRecovery();
   updatePlayUI();
   syncPlaybackState();
   if (state.currentId) {
@@ -1782,11 +1879,18 @@ audio.addEventListener('play',  () => {
   if (chaptersOverlay.classList.contains('open')) renderPlaylist();
 });
 audio.addEventListener('pause', () => {
+  const unexpectedPause = !isPauseExpected();
   state.isPlaying = false; updatePlayUI(); syncPlaybackState(); renderAll();
   if (state.currentId) saveProgress(state.currentId, audio.currentTime);
+  if (unexpectedPause) scheduleUnexpectedResume('pause-event');
 });
 audio.addEventListener('ended', () => {
-  state.isPlaying = false; updatePlayUI();
+  state.isPlaying = false;
+  state.wantsPlayback = false;
+  state.autoResumeAttempts = 0;
+  cancelUnexpectedResume();
+  cancelStallRecovery();
+  updatePlayUI();
   if (!state.currentId) return;
 
   const endedId = state.currentId;
@@ -1814,15 +1918,21 @@ audio.addEventListener('ended', () => {
   showToast('Book finished');
 });
 audio.addEventListener('loadedmetadata', () => { durationEl.textContent = formatTime(audio.duration); updateProgress(); });
-audio.addEventListener('timeupdate', () => { updateProgress(); throttledSave(); });
+audio.addEventListener('timeupdate', () => {
+  state.lastProgressAt = Date.now();
+  cancelStallRecovery();
+  updateProgress();
+  throttledSave();
+});
 audio.addEventListener('stalled', () => {
   if (!audio.src) return;
   console.warn('[audio] stalled', { currentId: state.currentId, currentTime: audio.currentTime });
-  if (state.isPlaying) showToast('Playback stalled. Tap Play if it does not resume');
+  if (state.wantsPlayback) scheduleStallRecovery('stalled');
 });
 audio.addEventListener('waiting', () => {
-  if (!audio.src || !state.isPlaying) return;
+  if (!audio.src || !state.wantsPlayback) return;
   console.warn('[audio] waiting', { currentId: state.currentId, currentTime: audio.currentTime });
+  scheduleStallRecovery('waiting');
 });
 audio.addEventListener('error', async () => {
   if (!audio.src) return;
@@ -1843,16 +1953,19 @@ document.addEventListener('visibilitychange', () => {
   }
   restoreLastTrack({ silent: true });
   refreshActiveMediaSession();
+  if (state.wantsPlayback && audio.paused) scheduleUnexpectedResume('visibilitychange');
 });
 window.addEventListener('beforeunload', () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
 window.addEventListener('pagehide',     () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
 window.addEventListener('pageshow', () => {
   restoreLastTrack({ silent: true });
   refreshActiveMediaSession();
+  if (state.wantsPlayback && audio.paused) scheduleUnexpectedResume('pageshow');
 });
 window.addEventListener('focus', () => {
   restoreLastTrack({ silent: true });
   refreshActiveMediaSession();
+  if (state.wantsPlayback && audio.paused) scheduleUnexpectedResume('focus');
 });
 
 // ===== Control Listeners =====
@@ -2071,6 +2184,7 @@ async function removeTrackFromGroup(trackId) {
 }
 
 function resetPlayer() {
+  markIntentionalPause();
   audio.pause(); audio.src = '';
   state.currentId = null; state.isPlaying = false;
   saveCurrentId(null);
