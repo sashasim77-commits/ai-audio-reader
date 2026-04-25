@@ -1228,13 +1228,95 @@ function getTrackAlbum(group) {
 }
 
 function updatePlayerTitle(track, group) {
-  trackTitle.textContent  = track.name;
-  trackAuthor.textContent = (group ? group.name + ' · ' : '') + formatSize(track.size);
+  const title = getTrackTitle(track);
+  const artist = getTrackArtist(track, group);
+  trackTitle.textContent = title;
+  trackAuthor.textContent = artist;
+  document.title = `${title} - AI Audio Reader`;
+  audio.setAttribute('title', title);
+  audio.setAttribute('aria-label', `${title} - ${artist}`);
 }
 
-function updatePlayerTitle(track, group) {
-  trackTitle.textContent = getTrackTitle(track);
-  trackAuthor.textContent = getTrackArtist(track, group);
+async function ensureTrackUrl(track) {
+  if (!track) return false;
+  if (track.url) return true;
+  if (!db) return false;
+
+  const file = await dbGet(track.id);
+  if (!file) return false;
+  track.url = URL.createObjectURL(file);
+  return true;
+}
+
+function seekAfterMetadata(pos) {
+  const target = Math.max(0, pos || 0);
+  const apply = () => {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const maxPos = duration > 1 ? duration - 1 : duration;
+    audio.currentTime = duration > 0 ? Math.min(target, maxPos) : target;
+    updateProgress();
+    syncPositionState();
+  };
+
+  if (audio.readyState >= 1) apply();
+  else audio.addEventListener('loadedmetadata', apply, { once: true });
+}
+
+function prepareTrackForPlayback(ctx, pos = 0, { saveId = true } = {}) {
+  if (!ctx?.track?.url) return false;
+  const { track, group } = ctx;
+
+  state.currentId = track.id;
+  if (saveId) saveCurrentId(track.id);
+
+  if (audio.src !== track.url) audio.src = track.url;
+  audio.playbackRate = state.speed;
+  seekAfterMetadata(pos);
+  updatePlayerTitle(track, group);
+  applyCoverForTrack(track, group);
+  updateMediaSession(track, group);
+  syncPlaybackState();
+  syncPositionState();
+  return true;
+}
+
+let restoreLastTrackPromise = null;
+async function restoreLastTrack({ autoplay = false, silent = false } = {}) {
+  if (audio.src && state.currentId) {
+    if (autoplay) return playAudio({ skipRestore: true });
+    return true;
+  }
+
+  if (restoreLastTrackPromise) {
+    const restored = await restoreLastTrackPromise;
+    if (autoplay && restored) return playAudio({ skipRestore: true });
+    return restored;
+  }
+
+  restoreLastTrackPromise = (async () => {
+    const lastId = localStorage.getItem(CURRENT_KEY);
+    if (!lastId) return false;
+
+    const ctx = findTrack(lastId);
+    if (!ctx) return false;
+    const hasUrl = await ensureTrackUrl(ctx.track);
+    if (!hasUrl) {
+      if (!silent) showToast('Re-upload required');
+      return false;
+    }
+
+    const pos = loadProgress(lastId);
+    hideContinueBanner();
+    return prepareTrackForPlayback(ctx, pos);
+  })();
+
+  try {
+    const restored = await restoreLastTrackPromise;
+    if (autoplay && restored) return playAudio({ skipRestore: true });
+    return restored;
+  } finally {
+    restoreLastTrackPromise = null;
+  }
 }
 
 function loadBook(id, fromBookmark = false) {
@@ -1281,10 +1363,28 @@ function loadBook(id, fromBookmark = false) {
   renderAll();
 }
 
-async function playAudio() {
+async function playAudio({ skipRestore = false } = {}) {
   try {
+    if (!skipRestore && !audio.src) {
+      const restored = await restoreLastTrack({ silent: true });
+      if (!restored) {
+        showToast('Select a track first');
+        return false;
+      }
+    }
+    if (!audio.src) return false;
     await audio.play();
-  } catch {}
+    return true;
+  } catch (e) {
+    console.warn('[audio] play failed', {
+      name: e?.name ?? null,
+      message: e?.message ?? null,
+      currentId: state.currentId,
+      readyState: audio.readyState,
+    });
+    refreshActiveMediaSession();
+    return false;
+  }
 }
 
 function pauseAudio() { audio.pause(); }
@@ -1311,38 +1411,6 @@ function playPrev() {
 }
 
 // ===== Media Session =====
-function updateMediaSession(track, group) {
-  if (!('mediaSession' in navigator)) return;
-  const coverUrl = group ? (state.covers[group.id] || null) : null;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title:  track.name,
-    artist: group ? group.name : 'AI Audio Reader',
-    album:  'AI Audio Reader',
-    artwork: coverUrl
-      ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }]
-      : [{ src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
-  });
-}
-
-function initMediaSession() {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.setActionHandler('play',          playAudio);
-  navigator.mediaSession.setActionHandler('pause',         pauseAudio);
-  navigator.mediaSession.setActionHandler('previoustrack', playPrev);
-  navigator.mediaSession.setActionHandler('nexttrack',     playNext);
-  navigator.mediaSession.setActionHandler('seekbackward',  ({ seekOffset }) => {
-    audio.currentTime = Math.max(0, audio.currentTime - (seekOffset || 15));
-  });
-  navigator.mediaSession.setActionHandler('seekforward', ({ seekOffset }) => {
-    audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + (seekOffset || 15));
-  });
-  try {
-    navigator.mediaSession.setActionHandler('seekto', ({ seekTime }) => {
-      if (isFinite(seekTime)) audio.currentTime = seekTime;
-    });
-  } catch {}
-}
-
 function seekBy(seconds) {
   if (!audio.src) return;
   const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
@@ -1379,12 +1447,43 @@ function refreshActiveMediaSession() {
   syncPositionState();
 }
 
+let audioRecoveryInFlight = false;
+async function recoverCurrentAudioSource() {
+  if (audioRecoveryInFlight || !state.currentId || !db) return false;
+
+  const ctx = findTrack(state.currentId);
+  if (!ctx) return false;
+
+  const currentPos = Number.isFinite(audio.currentTime) && audio.currentTime > 0
+    ? audio.currentTime
+    : loadProgress(state.currentId);
+  const shouldResume = state.isPlaying;
+
+  audioRecoveryInFlight = true;
+  try {
+    audio.pause();
+    if (ctx.track.url) URL.revokeObjectURL(ctx.track.url);
+    ctx.track.url = null;
+
+    const hasUrl = await ensureTrackUrl(ctx.track);
+    if (!hasUrl) return false;
+
+    prepareTrackForPlayback(ctx, currentPos);
+    if (shouldResume) await playAudio({ skipRestore: true });
+    return true;
+  } catch (e) {
+    console.warn('[audio] recovery failed', e);
+    return false;
+  } finally {
+    audioRecoveryInFlight = false;
+  }
+}
+
 function updateMediaSession(track, group) {
-  if (!('mediaSession' in navigator) || !track) return;
+  if (!('mediaSession' in navigator) || typeof MediaMetadata !== 'function' || !track) return;
   const coverArtworks = getCoverArtworks(track, group);
   const coverUrl = getCoverMediaSrc(track, group) || getCoverUrl(track, group);
   const coverType = getCoverType(track, group) || 'image/jpeg';
-  navigator.mediaSession.metadata = null;
   navigator.mediaSession.metadata = new MediaMetadata({
     title: getTrackTitle(track),
     artist: getTrackArtist(track, group),
@@ -1725,14 +1824,15 @@ audio.addEventListener('waiting', () => {
   if (!audio.src || !state.isPlaying) return;
   console.warn('[audio] waiting', { currentId: state.currentId, currentTime: audio.currentTime });
 });
-audio.addEventListener('error', () => {
+audio.addEventListener('error', async () => {
   if (!audio.src) return;
   console.warn('[audio] error', {
     currentId: state.currentId,
     code: audio.error?.code ?? null,
     message: audio.error?.message ?? null,
   });
-  showToast('Playback error. Tap Play to resume');
+  const recovered = await recoverCurrentAudioSource();
+  if (!recovered) showToast('Playback error. Tap Play to resume');
   refreshActiveMediaSession();
 });
 
@@ -1741,15 +1841,22 @@ document.addEventListener('visibilitychange', () => {
     if (state.currentId) saveProgress(state.currentId, audio.currentTime);
     return;
   }
+  restoreLastTrack({ silent: true });
   refreshActiveMediaSession();
 });
 window.addEventListener('beforeunload', () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
 window.addEventListener('pagehide',     () => { if (state.currentId) saveProgress(state.currentId, audio.currentTime); });
-window.addEventListener('pageshow', refreshActiveMediaSession);
+window.addEventListener('pageshow', () => {
+  restoreLastTrack({ silent: true });
+  refreshActiveMediaSession();
+});
+window.addEventListener('focus', () => {
+  restoreLastTrack({ silent: true });
+  refreshActiveMediaSession();
+});
 
 // ===== Control Listeners =====
 playBtn.addEventListener('click', () => {
-  if (!audio.src) { showToast('Select a track first'); return; }
   state.isPlaying ? pauseAudio() : playAudio();
 });
 
@@ -2313,26 +2420,8 @@ async function init() {
   // Init bookmarks display
   renderBookmarks();
 
-  // Auto-load last track
-  const lastId = localStorage.getItem(CURRENT_KEY);
-  if (lastId) {
-    const ctx = findTrack(lastId);
-    if (ctx?.track.url) {
-      const pos = loadProgress(lastId);
-      state.currentId = lastId;
-      audio.src = ctx.track.url;
-      audio.playbackRate = state.speed;
-      audio.addEventListener('loadedmetadata', () => {
-        const maxPos = audio.duration > 1 ? audio.duration - 1 : audio.duration;
-        audio.currentTime = Math.max(0, Math.min(pos, maxPos));
-      }, { once: true });
-      updatePlayerTitle(ctx.track, ctx.group);
-      applyCoverForTrack(ctx.track, ctx.group);
-      updateMediaSession(ctx.track, ctx.group);
-      syncPlaybackState();
-      hideContinueBanner();
-    }
-  }
+  // Auto-load last track so Bluetooth/car controls have metadata ready.
+  await restoreLastTrack({ silent: true });
 
   renderAll();
 }
